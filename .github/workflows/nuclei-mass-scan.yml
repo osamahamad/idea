@@ -320,12 +320,13 @@ jobs:
 
       - name: Setup GPG for encryption
         run: |
-          # Import GPG key from secrets
+          # Import GPG keys (same method as decryption)
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
           echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --batch --import
           
-          # Trust the key
-          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --import-ownertrust
+          # Verify GPG setup
+          gpg --list-secret-keys --keyid-format LONG
+          echo "✅ GPG keys imported successfully"
 
       - name: Encrypt scan results
         run: |
@@ -333,7 +334,7 @@ jobs:
           
           # Encrypt results file
           if [ -f "${{ env.results_file }}" ]; then
-            gpg --batch --yes --trust-model always \
+            gpg --batch --yes \
                 --recipient "${{ secrets.GPG_KEY_ID }}" \
                 --encrypt --armor \
                 --output "${{ env.results_file }}.gpg" \
@@ -343,7 +344,7 @@ jobs:
           
           # Encrypt summary file
           if [ -f "${{ env.summary_file }}" ]; then
-            gpg --batch --yes --trust-model always \
+            gpg --batch --yes \
                 --recipient "${{ secrets.GPG_KEY_ID }}" \
                 --encrypt --armor \
                 --output "${{ env.summary_file }}.gpg" \
@@ -566,14 +567,14 @@ jobs:
       - name: Encrypt consolidated report
         run: |
           if [ -f "${{ env.report_file }}" ]; then
-            gpg --batch --yes --trust-model always \
+            gpg --batch --yes \
                 --recipient "${{ secrets.GPG_KEY_ID }}" \
                 --encrypt --armor \
                 --output "${{ env.report_file }}.gpg" \
                 "${{ env.report_file }}"
             
             rm -f "${{ env.report_file }}"
-            echo "Consolidated report encrypted"
+            echo "✅ Consolidated report encrypted"
           fi
 
       - name: Store consolidated report in repo
