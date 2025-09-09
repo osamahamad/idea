@@ -1,0 +1,625 @@
+name: Nuclei Mass Vulnerability Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_start:
+        description: 'Starting batch number'
+        required: true
+        default: '1'
+        type: string
+      batch_end:
+        description: 'Ending batch number'
+        required: true
+        default: '10'
+        type: string
+      scan_profile:
+        description: 'Scan profile (quick/full/critical)'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+        - quick
+        - full
+        - critical
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  BATCH_SIZE: 1000  # Subdomains per batch
+  MAX_PARALLEL_JOBS: 15  # Conservative limit to avoid GitHub rate limits
+  NUCLEI_VERSION: "v3.1.0"
+  RESULTS_BRANCH: "scan-results"  # Dedicated branch for storing results
+
+jobs:
+  # Job to generate batch matrix
+  prepare-batches:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+      total_batches: ${{ steps.generate-matrix.outputs.total_batches }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup GPG for decryption
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --batch --import
+          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --import-ownertrust
+
+      - name: Decrypt subdomain file
+        run: |
+          if [ -f "subdomains/all-subdomains.txt.gpg" ]; then
+            gpg --batch --yes --quiet --decrypt "subdomains/all-subdomains.txt.gpg" > "subdomains/all-subdomains.txt"
+            echo "Subdomain file decrypted successfully"
+          else
+            echo "Error: subdomains/all-subdomains.txt.gpg not found"
+            echo "Please encrypt your subdomain file using: gpg --encrypt --armor --recipient \$GPG_KEY_ID subdomains/all-subdomains.txt"
+            exit 1
+          fi
+
+      - name: Generate batch matrix
+        id: generate-matrix
+        run: |
+          # Count total subdomains
+          if [ -f "subdomains/all-subdomains.txt" ]; then
+            TOTAL_SUBDOMAINS=$(wc -l < subdomains/all-subdomains.txt)
+          else
+            echo "Error: subdomains/all-subdomains.txt not found after decryption"
+            exit 1
+          fi
+          
+          # Calculate total batches needed
+          TOTAL_BATCHES=$(( (TOTAL_SUBDOMAINS + BATCH_SIZE - 1) / BATCH_SIZE ))
+          
+          # Set batch range based on input or default
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            START_BATCH=${{ github.event.inputs.batch_start }}
+            END_BATCH=${{ github.event.inputs.batch_end }}
+          else
+            # For scheduled runs, process all batches in chunks
+            START_BATCH=1
+            END_BATCH=$(( TOTAL_BATCHES > MAX_PARALLEL_JOBS ? MAX_PARALLEL_JOBS : TOTAL_BATCHES ))
+          fi
+          
+          # Generate matrix
+          MATRIX="["
+          for i in $(seq $START_BATCH $END_BATCH); do
+            if [ $i -le $TOTAL_BATCHES ]; then
+              MATRIX="${MATRIX}${i},"
+            fi
+          done
+          MATRIX="${MATRIX%,}]"
+          
+          echo "matrix=${MATRIX}" >> $GITHUB_OUTPUT
+          echo "total_batches=${TOTAL_BATCHES}" >> $GITHUB_OUTPUT
+          
+          echo "Generated matrix for batches ${START_BATCH}-${END_BATCH} of ${TOTAL_BATCHES} total batches"
+          echo "Total subdomains: ${TOTAL_SUBDOMAINS}"
+
+  # Main scanning job with matrix strategy
+  nuclei-scan:
+    needs: prepare-batches
+    if: needs.prepare-batches.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # 5h 50m to stay under 6h limit
+    strategy:
+      fail-fast: false
+      max-parallel: 15  # Conservative limit to avoid GitHub rate limits
+      matrix:
+        batch: ${{ fromJson(needs.prepare-batches.outputs.matrix) }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup GPG for decryption
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --batch --import
+          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --import-ownertrust
+
+      - name: Decrypt subdomain file
+        run: |
+          if [ -f "subdomains/all-subdomains.txt.gpg" ]; then
+            gpg --batch --yes --quiet --decrypt "subdomains/all-subdomains.txt.gpg" > "subdomains/all-subdomains.txt"
+            echo "Subdomain file decrypted successfully"
+          else
+            echo "Error: subdomains/all-subdomains.txt.gpg not found"
+            exit 1
+          fi
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Install Nuclei
+        run: |
+          go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@${{ env.NUCLEI_VERSION }}
+          nuclei -version
+
+      - name: Update Nuclei templates
+        run: |
+          nuclei -update-templates
+          echo "Template update completed"
+
+      - name: Prepare subdomain batch
+        id: prepare-batch
+        run: |
+          BATCH_NUM=${{ matrix.batch }}
+          START_LINE=$(( (BATCH_NUM - 1) * BATCH_SIZE + 1 ))
+          END_LINE=$(( BATCH_NUM * BATCH_SIZE ))
+          
+          # Extract batch from main file
+          sed -n "${START_LINE},${END_LINE}p" subdomains/all-subdomains.txt > batch_${BATCH_NUM}.txt
+          
+          # Count actual subdomains in this batch
+          ACTUAL_COUNT=$(wc -l < batch_${BATCH_NUM}.txt)
+          
+          echo "batch_file=batch_${BATCH_NUM}.txt" >> $GITHUB_OUTPUT
+          echo "subdomain_count=${ACTUAL_COUNT}" >> $GITHUB_OUTPUT
+          echo "Processing batch ${BATCH_NUM} with ${ACTUAL_COUNT} subdomains"
+
+      - name: Configure scan parameters
+        id: scan-config
+        run: |
+          PROFILE="${{ github.event.inputs.scan_profile || 'full' }}"
+          
+          case $PROFILE in
+            "quick")
+              TEMPLATES="-t cves/ -t vulnerabilities/ -t exposures/"
+              SEVERITY="-severity critical,high"
+              RATE_LIMIT="-rl 100"
+              ;;
+            "critical")
+              TEMPLATES="-t cves/ -t vulnerabilities/"
+              SEVERITY="-severity critical"
+              RATE_LIMIT="-rl 150"
+              ;;
+            "full"|*)
+              TEMPLATES="-t ."  # All templates
+              SEVERITY="-severity critical,high,medium,low,info"
+              RATE_LIMIT="-rl 50"
+              ;;
+          esac
+          
+          echo "templates=${TEMPLATES}" >> $GITHUB_OUTPUT
+          echo "severity=${SEVERITY}" >> $GITHUB_OUTPUT
+          echo "rate_limit=${RATE_LIMIT}" >> $GITHUB_OUTPUT
+          echo "Configured for ${PROFILE} scan profile"
+
+      - name: Run Nuclei scan
+        run: |
+          BATCH_NUM=${{ matrix.batch }}
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          OUTPUT_FILE="nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json"
+          
+          echo "Starting Nuclei scan for batch ${BATCH_NUM}..."
+          
+          nuclei \
+            -l ${{ steps.prepare-batch.outputs.batch_file }} \
+            ${{ steps.scan-config.outputs.templates }} \
+            ${{ steps.scan-config.outputs.severity }} \
+            ${{ steps.scan-config.outputs.rate_limit }} \
+            -j \
+            -o "${OUTPUT_FILE}" \
+            -stats \
+            -silent \
+            -timeout 10 \
+            -retries 2 \
+            -bulk-size 50 \
+            -c 25 \
+            -header "User-Agent: Mozilla/5.0 (compatible; SecurityScanner/1.0)" \
+            -exclude-tags dos,intrusive \
+            || echo "Scan completed with some errors (exit code: $?)"
+          
+          # Check if results file exists and has content
+          if [ -f "${OUTPUT_FILE}" ] && [ -s "${OUTPUT_FILE}" ]; then
+            echo "Scan results generated: ${OUTPUT_FILE}"
+            echo "Results count: $(wc -l < ${OUTPUT_FILE})"
+            echo "results_file=${OUTPUT_FILE}" >> $GITHUB_ENV
+          else
+            echo "No results found for batch ${BATCH_NUM}"
+            echo '[]' > "${OUTPUT_FILE}"
+            echo "results_file=${OUTPUT_FILE}" >> $GITHUB_ENV
+          fi
+
+      - name: Generate scan summary
+        run: |
+          BATCH_NUM=${{ matrix.batch }}
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          SUMMARY_FILE="scan_summary_batch_${BATCH_NUM}_${TIMESTAMP}.json"
+          
+          # Count results by severity
+          if [ -f "${{ env.results_file }}" ]; then
+            CRITICAL=$(jq -r 'select(.info.severity == "critical") | .info.severity' ${{ env.results_file }} 2>/dev/null | wc -l || echo "0")
+            HIGH=$(jq -r 'select(.info.severity == "high") | .info.severity' ${{ env.results_file }} 2>/dev/null | wc -l || echo "0")
+            MEDIUM=$(jq -r 'select(.info.severity == "medium") | .info.severity' ${{ env.results_file }} 2>/dev/null | wc -l || echo "0")
+            LOW=$(jq -r 'select(.info.severity == "low") | .info.severity' ${{ env.results_file }} 2>/dev/null | wc -l || echo "0")
+            INFO=$(jq -r 'select(.info.severity == "info") | .info.severity' ${{ env.results_file }} 2>/dev/null | wc -l || echo "0")
+            TOTAL=$(wc -l < ${{ env.results_file }} 2>/dev/null || echo "0")
+          else
+            CRITICAL=0; HIGH=0; MEDIUM=0; LOW=0; INFO=0; TOTAL=0
+          fi
+          
+          # Create summary JSON
+          cat > "${SUMMARY_FILE}" << EOF
+          {
+            "batch_number": ${BATCH_NUM},
+            "scan_timestamp": "${TIMESTAMP}",
+            "subdomains_scanned": ${{ steps.prepare-batch.outputs.subdomain_count }},
+            "scan_profile": "${{ github.event.inputs.scan_profile || 'full' }}",
+            "results_summary": {
+              "total_findings": ${TOTAL},
+              "critical": ${CRITICAL},
+              "high": ${HIGH},
+              "medium": ${MEDIUM},
+              "low": ${LOW},
+              "info": ${INFO}
+            },
+            "scan_metadata": {
+              "nuclei_version": "${{ env.NUCLEI_VERSION }}",
+              "workflow_run_id": "${{ github.run_id }}",
+              "workflow_run_number": "${{ github.run_number }}"
+            }
+          }
+          EOF
+          
+          echo "summary_file=${SUMMARY_FILE}" >> $GITHUB_ENV
+          echo "Scan summary generated for batch ${BATCH_NUM}"
+
+      - name: Setup GPG for encryption
+        run: |
+          # Import GPG key from secrets
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --batch --import
+          
+          # Trust the key
+          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --import-ownertrust
+
+      - name: Encrypt scan results
+        run: |
+          BATCH_NUM=${{ matrix.batch }}
+          
+          # Encrypt results file
+          if [ -f "${{ env.results_file }}" ]; then
+            gpg --batch --yes --trust-model always \
+                --recipient "${{ secrets.GPG_KEY_ID }}" \
+                --encrypt --armor \
+                --output "${{ env.results_file }}.gpg" \
+                "${{ env.results_file }}"
+            echo "Results encrypted: ${{ env.results_file }}.gpg"
+          fi
+          
+          # Encrypt summary file
+          if [ -f "${{ env.summary_file }}" ]; then
+            gpg --batch --yes --trust-model always \
+                --recipient "${{ secrets.GPG_KEY_ID }}" \
+                --encrypt --armor \
+                --output "${{ env.summary_file }}.gpg" \
+                "${{ env.summary_file }}"
+            echo "Summary encrypted: ${{ env.summary_file }}.gpg"
+          fi
+          
+          # Clean up unencrypted files
+          rm -f "${{ env.results_file }}" "${{ env.summary_file }}"
+
+      - name: Setup results branch
+        run: |
+          # Configure git
+          git config --global user.name "Nuclei Scanner Bot"
+          git config --global user.email "nuclei-scanner@github-actions.bot"
+          
+          # Create results branch if it doesn't exist
+          git fetch origin ${{ env.RESULTS_BRANCH }} || git checkout -b ${{ env.RESULTS_BRANCH }}
+          git checkout ${{ env.RESULTS_BRANCH }} || git checkout -b ${{ env.RESULTS_BRANCH }}
+          
+          # Create output directory structure
+          mkdir -p output/$(date +%Y/%m/%d)
+          mkdir -p output/latest
+
+      - name: Store encrypted results in repo
+        run: |
+          BATCH_NUM=${{ matrix.batch }}
+          DATE_DIR="output/$(date +%Y/%m/%d)"
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          
+          # Move encrypted files to organized directory structure
+          if [ -f "nuclei_results_batch_${BATCH_NUM}_*.json.gpg" ]; then
+            mv nuclei_results_batch_${BATCH_NUM}_*.json.gpg "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg"
+          fi
+          
+          if [ -f "scan_summary_batch_${BATCH_NUM}_*.json.gpg" ]; then
+            mv scan_summary_batch_${BATCH_NUM}_*.json.gpg "${DATE_DIR}/scan_summary_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg"
+          fi
+          
+          # Also copy to latest directory for easy access
+          if [ -f "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg" ]; then
+            cp "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg" "output/latest/nuclei_results_batch_${BATCH_NUM}_latest.json.gpg"
+          fi
+          
+          if [ -f "${DATE_DIR}/scan_summary_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg" ]; then
+            cp "${DATE_DIR}/scan_summary_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg" "output/latest/scan_summary_batch_${BATCH_NUM}_latest.json.gpg"
+          fi
+
+      - name: Commit and push results
+        run: |
+          BATCH_NUM=${{ matrix.batch }}
+          
+          # Add files to git
+          git add output/
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No new results to commit for batch ${{ matrix.batch }}"
+          else
+            # Commit with detailed message
+            FINDINGS_COUNT="0"
+            if [ -f "output/latest/scan_summary_batch_${BATCH_NUM}_latest.json.gpg" ]; then
+              # Try to get findings count from encrypted summary (will show 0 if can't decrypt)
+              TEMP_SUMMARY=$(mktemp)
+              if gpg --batch --yes --quiet --decrypt "output/latest/scan_summary_batch_${BATCH_NUM}_latest.json.gpg" > "$TEMP_SUMMARY" 2>/dev/null; then
+                FINDINGS_COUNT=$(jq -r '.results_summary.total_findings // 0' "$TEMP_SUMMARY" 2>/dev/null || echo "0")
+              fi
+              rm -f "$TEMP_SUMMARY"
+            fi
+            
+            git commit -m "🎯 Batch ${{ matrix.batch }} scan results - ${FINDINGS_COUNT} findings
+            
+            - Batch: ${{ matrix.batch }}
+            - Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+            - Workflow: ${{ github.workflow }}
+            - Run ID: ${{ github.run_id }}
+            - Scan Profile: ${{ github.event.inputs.scan_profile || 'full' }}
+            - Findings: ${FINDINGS_COUNT}"
+            
+            # Push with retry logic
+            for i in {1..3}; do
+              if git push origin ${{ env.RESULTS_BRANCH }}; then
+                echo "Successfully pushed batch ${{ matrix.batch }} results (attempt $i)"
+                break
+              else
+                echo "Push failed for batch ${{ matrix.batch }}, attempt $i/3"
+                if [ $i -eq 3 ]; then
+                  echo "Failed to push after 3 attempts"
+                  exit 1
+                fi
+                sleep $((i * 10))  # Exponential backoff
+                git pull --rebase origin ${{ env.RESULTS_BRANCH }} || true
+              fi
+            done
+          fi
+
+      - name: Cleanup batch files
+        run: |
+          rm -f batch_${{ matrix.batch }}.txt
+          rm -f subdomains/all-subdomains.txt  # Remove decrypted subdomain file
+          rm -f *.json
+          echo "Cleanup completed for batch ${{ matrix.batch }}"
+
+  # Job to consolidate results and create final report
+  consolidate-results:
+    needs: [prepare-batches, nuclei-scan]
+    if: always() && needs.prepare-batches.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout results branch
+        run: |
+          git fetch origin ${{ env.RESULTS_BRANCH }} || echo "Results branch doesn't exist yet"
+          git checkout ${{ env.RESULTS_BRANCH }} || echo "No results branch to checkout"
+
+      - name: Setup GPG for decryption
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --batch --import
+
+      - name: Generate consolidated report
+        run: |
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          REPORT_FILE="consolidated_report_${TIMESTAMP}.json"
+          
+          # Initialize report structure
+          cat > "${REPORT_FILE}" << EOF
+          {
+            "scan_metadata": {
+              "timestamp": "${TIMESTAMP}",
+              "workflow_run_id": "${{ github.run_id }}",
+              "total_batches_processed": $(ls encrypted-results/*summary*.gpg 2>/dev/null | wc -l),
+              "scan_profile": "${{ github.event.inputs.scan_profile || 'full' }}"
+            },
+            "batch_summaries": [],
+            "overall_summary": {
+              "total_findings": 0,
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0,
+              "info": 0,
+              "total_subdomains_scanned": 0
+            }
+          }
+          EOF
+          
+          # Process each summary file from latest results
+          TOTAL_FINDINGS=0
+          TOTAL_CRITICAL=0
+          TOTAL_HIGH=0
+          TOTAL_MEDIUM=0
+          TOTAL_LOW=0
+          TOTAL_INFO=0
+          TOTAL_SUBDOMAINS=0
+          
+          if [ -d "output/latest" ]; then
+            for summary_file in output/latest/*summary*.gpg; do
+            if [ -f "$summary_file" ]; then
+              # Decrypt summary
+              DECRYPTED_SUMMARY=$(mktemp)
+              gpg --batch --yes --quiet --decrypt "$summary_file" > "$DECRYPTED_SUMMARY" 2>/dev/null
+              
+              if [ -s "$DECRYPTED_SUMMARY" ]; then
+                # Extract values from summary
+                BATCH_FINDINGS=$(jq -r '.results_summary.total_findings' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
+                BATCH_CRITICAL=$(jq -r '.results_summary.critical' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
+                BATCH_HIGH=$(jq -r '.results_summary.high' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
+                BATCH_MEDIUM=$(jq -r '.results_summary.medium' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
+                BATCH_LOW=$(jq -r '.results_summary.low' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
+                BATCH_INFO=$(jq -r '.results_summary.info' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
+                BATCH_SUBDOMAINS=$(jq -r '.subdomains_scanned' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
+                
+                # Add to totals
+                TOTAL_FINDINGS=$((TOTAL_FINDINGS + BATCH_FINDINGS))
+                TOTAL_CRITICAL=$((TOTAL_CRITICAL + BATCH_CRITICAL))
+                TOTAL_HIGH=$((TOTAL_HIGH + BATCH_HIGH))
+                TOTAL_MEDIUM=$((TOTAL_MEDIUM + BATCH_MEDIUM))
+                TOTAL_LOW=$((TOTAL_LOW + BATCH_LOW))
+                TOTAL_INFO=$((TOTAL_INFO + BATCH_INFO))
+                TOTAL_SUBDOMAINS=$((TOTAL_SUBDOMAINS + BATCH_SUBDOMAINS))
+                
+                # Add to batch summaries array
+                TEMP_REPORT=$(mktemp)
+                jq --slurpfile batch "$DECRYPTED_SUMMARY" '.batch_summaries += $batch' "$REPORT_FILE" > "$TEMP_REPORT"
+                mv "$TEMP_REPORT" "$REPORT_FILE"
+              fi
+              
+              rm -f "$DECRYPTED_SUMMARY"
+            fi
+            done
+          else
+            echo "No latest results directory found"
+          fi
+          
+          # Update overall summary
+          TEMP_REPORT=$(mktemp)
+          jq --argjson total_findings "$TOTAL_FINDINGS" \
+             --argjson critical "$TOTAL_CRITICAL" \
+             --argjson high "$TOTAL_HIGH" \
+             --argjson medium "$TOTAL_MEDIUM" \
+             --argjson low "$TOTAL_LOW" \
+             --argjson info "$TOTAL_INFO" \
+             --argjson subdomains "$TOTAL_SUBDOMAINS" \
+             '.overall_summary.total_findings = $total_findings |
+              .overall_summary.critical = $critical |
+              .overall_summary.high = $high |
+              .overall_summary.medium = $medium |
+              .overall_summary.low = $low |
+              .overall_summary.info = $info |
+              .overall_summary.total_subdomains_scanned = $subdomains' \
+             "$REPORT_FILE" > "$TEMP_REPORT"
+          mv "$TEMP_REPORT" "$REPORT_FILE"
+          
+          echo "report_file=${REPORT_FILE}" >> $GITHUB_ENV
+          echo "Generated consolidated report with ${TOTAL_FINDINGS} total findings across ${TOTAL_SUBDOMAINS} subdomains"
+
+      - name: Encrypt consolidated report
+        run: |
+          if [ -f "${{ env.report_file }}" ]; then
+            gpg --batch --yes --trust-model always \
+                --recipient "${{ secrets.GPG_KEY_ID }}" \
+                --encrypt --armor \
+                --output "${{ env.report_file }}.gpg" \
+                "${{ env.report_file }}"
+            
+            rm -f "${{ env.report_file }}"
+            echo "Consolidated report encrypted"
+          fi
+
+      - name: Store consolidated report in repo
+        run: |
+          # Configure git
+          git config --global user.name "Nuclei Scanner Bot"
+          git config --global user.email "nuclei-scanner@github-actions.bot"
+          
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          DATE_DIR="output/$(date +%Y/%m/%d)"
+          
+          # Ensure we're on results branch
+          git checkout ${{ env.RESULTS_BRANCH }} || git checkout -b ${{ env.RESULTS_BRANCH }}
+          
+          # Create directories
+          mkdir -p "${DATE_DIR}"
+          mkdir -p "output/latest"
+          
+          # Move consolidated report
+          if [ -f "consolidated_report_*.json.gpg" ]; then
+            mv consolidated_report_*.json.gpg "${DATE_DIR}/consolidated_report_${TIMESTAMP}.json.gpg"
+            cp "${DATE_DIR}/consolidated_report_${TIMESTAMP}.json.gpg" "output/latest/consolidated_report_latest.json.gpg"
+            
+            # Add and commit
+            git add output/
+            git commit -m "📊 Consolidated scan report - $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+            
+            - Workflow: ${{ github.workflow }}
+            - Run ID: ${{ github.run_id }}
+            - Timestamp: ${TIMESTAMP}
+            - Type: Consolidated Report"
+            
+            # Push with retry logic
+            for i in {1..3}; do
+              if git push origin ${{ env.RESULTS_BRANCH }}; then
+                echo "Successfully pushed consolidated report (attempt $i)"
+                break
+              else
+                echo "Push failed for consolidated report, attempt $i/3"
+                if [ $i -eq 3 ]; then
+                  echo "Failed to push after 3 attempts"
+                  exit 1
+                fi
+                sleep $((i * 10))
+                git pull --rebase origin ${{ env.RESULTS_BRANCH }} || true
+              fi
+            done
+          fi
+
+      - name: Create workflow summary
+        run: |
+          # Decrypt report for summary (without storing unencrypted version)
+          TEMP_REPORT=$(mktemp)
+          gpg --batch --yes --quiet --decrypt "${{ env.report_file }}.gpg" > "$TEMP_REPORT" 2>/dev/null
+          
+          if [ -s "$TEMP_REPORT" ]; then
+            TOTAL_FINDINGS=$(jq -r '.overall_summary.total_findings' "$TEMP_REPORT")
+            CRITICAL=$(jq -r '.overall_summary.critical' "$TEMP_REPORT")
+            HIGH=$(jq -r '.overall_summary.high' "$TEMP_REPORT")
+            MEDIUM=$(jq -r '.overall_summary.medium' "$TEMP_REPORT")
+            LOW=$(jq -r '.overall_summary.low' "$TEMP_REPORT")
+            INFO=$(jq -r '.overall_summary.info' "$TEMP_REPORT")
+            SUBDOMAINS=$(jq -r '.overall_summary.total_subdomains_scanned' "$TEMP_REPORT")
+            BATCHES=$(jq -r '.scan_metadata.total_batches_processed' "$TEMP_REPORT")
+            
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+          # 🎯 Nuclei Mass Scan Results
+          
+          ## 📊 Scan Overview
+          - **Total Subdomains Scanned**: ${SUBDOMAINS}
+          - **Batches Processed**: ${BATCHES}
+          - **Total Findings**: ${TOTAL_FINDINGS}
+          
+          ## 🚨 Findings by Severity
+          | Severity | Count |
+          |----------|-------|
+          | Critical | ${CRITICAL} |
+          | High     | ${HIGH} |
+          | Medium   | ${MEDIUM} |
+          | Low      | ${LOW} |
+          | Info     | ${INFO} |
+          
+          ## 🔒 Security
+          All results have been encrypted with GPG and are available as artifacts.
+          
+          ## 📁 Artifacts
+          - \`consolidated-encrypted-report\`: Complete scan report (encrypted)
+          - \`encrypted-results-batch-*\`: Individual batch results (encrypted)
+          
+          **Note**: Use your private GPG key to decrypt the results locally.
+          EOF
+          else
+            echo "⚠️ Could not generate detailed summary - report decryption failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          rm -f "$TEMP_REPORT"

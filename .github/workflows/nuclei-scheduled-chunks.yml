@@ -1,0 +1,87 @@
+name: Nuclei Scheduled Chunk Processing
+
+on:
+  schedule:
+    # Run every 6 hours to process different chunks
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      chunk_number:
+        description: 'Chunk number to process (1-4 for daily coverage)'
+        required: true
+        default: '1'
+        type: choice
+        options:
+        - '1'
+        - '2'
+        - '3'
+        - '4'
+      force_full_scan:
+        description: 'Force full template scan (slower)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  CHUNK_SIZE: 15  # Number of batches per chunk (15 * 1000 = 15k subdomains per chunk)
+  BATCH_SIZE: 1000
+
+jobs:
+  determine-chunk:
+    runs-on: ubuntu-latest
+    outputs:
+      chunk_number: ${{ steps.calc-chunk.outputs.chunk_number }}
+      batch_start: ${{ steps.calc-chunk.outputs.batch_start }}
+      batch_end: ${{ steps.calc-chunk.outputs.batch_end }}
+    steps:
+      - name: Calculate chunk parameters
+        id: calc-chunk
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CHUNK_NUM=${{ github.event.inputs.chunk_number }}
+          else
+            # Determine chunk based on time (4 chunks per day, every 6 hours)
+            HOUR=$(date +%H)
+            case $HOUR in
+              0|1|2|3|4|5) CHUNK_NUM=1 ;;
+              6|7|8|9|10|11) CHUNK_NUM=2 ;;
+              12|13|14|15|16|17) CHUNK_NUM=3 ;;
+              *) CHUNK_NUM=4 ;;
+            esac
+          fi
+          
+          # Calculate batch range for this chunk
+          BATCH_START=$(( (CHUNK_NUM - 1) * CHUNK_SIZE + 1 ))
+          BATCH_END=$(( CHUNK_NUM * CHUNK_SIZE ))
+          
+          echo "chunk_number=${CHUNK_NUM}" >> $GITHUB_OUTPUT
+          echo "batch_start=${BATCH_START}" >> $GITHUB_OUTPUT
+          echo "batch_end=${BATCH_END}" >> $GITHUB_OUTPUT
+          
+          echo "Processing chunk ${CHUNK_NUM}: batches ${BATCH_START}-${BATCH_END}"
+
+  trigger-main-scan:
+    needs: determine-chunk
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger main scan workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const scanProfile = '${{ github.event.inputs.force_full_scan }}' === 'true' ? 'full' : 'quick';
+            
+            const response = await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'nuclei-mass-scan.yml',
+              ref: 'main',
+              inputs: {
+                batch_start: '${{ needs.determine-chunk.outputs.batch_start }}',
+                batch_end: '${{ needs.determine-chunk.outputs.batch_end }}',
+                scan_profile: scanProfile
+              }
+            });
+            
+            console.log(`Triggered main scan for chunk ${{ needs.determine-chunk.outputs.chunk_number }}`);
+            console.log(`Batch range: ${{ needs.determine-chunk.outputs.batch_start }}-${{ needs.determine-chunk.outputs.batch_end }}`);
+            console.log(`Scan profile: ${scanProfile}`);

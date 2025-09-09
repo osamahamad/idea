@@ -1,0 +1,99 @@
+# Nuclei Mass Scanner - Security-focused .gitignore
+
+# 🔐 SECURITY: Never commit unencrypted subdomain files
+subdomains/*.txt
+subdomains/batch_*.txt
+!subdomains/.gitkeep
+
+# 🔐 SECURITY: Never commit unencrypted results
+output/*.json
+results/*.json
+*.json
+!*.json.gpg
+
+# 🔐 SECURITY: Never commit GPG private keys
+*.asc
+private-key.*
+public-key.*
+github-secrets-setup.md
+
+# 🔐 SECURITY: Never commit temporary decrypted files
+temp_*
+*.tmp
+*.temp
+
+# 📊 Allow encrypted files (safe for public repo)
+# *.gpg files are encrypted and safe to commit
+
+# 🛠️ Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 🐍 Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 📝 Logs
+*.log
+logs/
+
+# 🧪 Testing
+.coverage
+.pytest_cache/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# 🔧 OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 📦 Node.js (if used for any tooling)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 🔑 Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 🎯 Nuclei specific
+nuclei-templates/
+.nuclei-config.yaml
+
+# 📈 Batch processing temp files
+batch_processing/
+temp_batches/

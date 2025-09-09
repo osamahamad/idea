@@ -1,0 +1,83 @@
+# Subdomain Files Directory
+
+Place your **encrypted** subdomain files here:
+
+- `all-subdomains.txt.gpg` - **Encrypted** main subdomain list (required for public repo security)
+- `all-subdomains.txt` - Unencrypted file (auto-generated during workflow, not committed)
+
+## 🔐 Security Model
+
+Since this is a **public repository**, subdomain lists must be encrypted to protect private bug bounty assets.
+
+### File Structure
+```
+subdomains/
+├── all-subdomains.txt.gpg    # ✅ Encrypted - safe for public repo
+└── .gitkeep                  # This file
+```
+
+## 📝 Subdomain File Format
+
+Your unencrypted subdomain file should have one subdomain per line:
+```
+example.com
+subdomain1.example.com
+subdomain2.example.com
+api.example.com
+admin.example.com
+```
+
+## 🛠️ Setup Process
+
+### 1. Prepare Your Subdomain List
+```bash
+# Create your subdomain file
+echo "example.com" > subdomains/all-subdomains.txt
+echo "api.example.com" >> subdomains/all-subdomains.txt
+# ... add all your subdomains
+```
+
+### 2. Encrypt the Subdomain File
+```bash
+# Set your GPG key ID (from setup-encryption.sh)
+export GPG_KEY_ID=YOUR_GPG_KEY_ID
+
+# Encrypt the subdomain file
+./scripts/encrypt-subdomains.sh subdomains/all-subdomains.txt
+```
+
+### 3. Commit Only the Encrypted File
+```bash
+# Add encrypted file to git
+git add subdomains/all-subdomains.txt.gpg
+
+# Remove unencrypted file for security
+rm subdomains/all-subdomains.txt
+
+# Commit
+git commit -m "Add encrypted subdomain list"
+git push
+```
+
+## 🔄 Workflow Process
+
+During GitHub Actions execution:
+1. **Decrypt**: Workflow decrypts `all-subdomains.txt.gpg` using GitHub Secrets
+2. **Process**: Creates temporary `all-subdomains.txt` for processing
+3. **Batch**: Splits into batches for parallel scanning
+4. **Cleanup**: Removes decrypted file after processing
+5. **Results**: Stores encrypted results in `scan-results` branch
+
+## ⚠️ Security Notes
+
+- **Never commit** `all-subdomains.txt` (unencrypted) to the repository
+- **Only commit** `all-subdomains.txt.gpg` (encrypted version)
+- The `.gitignore` should exclude `*.txt` files in this directory
+- GitHub Actions automatically handles decryption using secrets
+
+## 🔍 Validation
+
+Use the subdomain splitter to validate your file:
+```bash
+python3 scripts/subdomain-splitter.py validate subdomains/all-subdomains.txt
+```
