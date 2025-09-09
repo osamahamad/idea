@@ -49,11 +49,9 @@ jobs:
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
           echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --batch --import
           
-          # Set ultimate trust for the key (with error handling)
-          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --batch --import-ownertrust 2>/dev/null || true
-          
           # Verify GPG setup
           gpg --list-secret-keys --keyid-format LONG
+          echo "✅ GPG keys imported successfully"
 
       - name: Decrypt subdomain file
         run: |
@@ -136,11 +134,9 @@ jobs:
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
           echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --batch --import
           
-          # Set ultimate trust for the key (with error handling)
-          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --batch --import-ownertrust 2>/dev/null || true
-          
           # Verify GPG setup
           gpg --list-secret-keys --keyid-format LONG
+          echo "✅ GPG keys imported successfully"
 
       - name: Decrypt subdomain file
         run: |
@@ -164,8 +160,16 @@ jobs:
 
       - name: Update Nuclei templates
         run: |
+          # Update templates and show where they're stored
           nuclei -update-templates
-          echo "Template update completed"
+          
+          # Verify templates are available
+          TEMPLATE_COUNT=$(find ~/.nuclei-templates -name "*.yaml" -o -name "*.yml" | wc -l)
+          echo "✅ Template update completed - $TEMPLATE_COUNT templates available"
+          
+          # List template directories
+          echo "📁 Template directories:"
+          ls -la ~/.nuclei-templates/ || echo "Templates directory not found"
 
       - name: Prepare subdomain batch
         id: prepare-batch
@@ -191,17 +195,17 @@ jobs:
           
           case $PROFILE in
             "quick")
-              TEMPLATES="-t cves/ -t vulnerabilities/ -t exposures/"
+              TEMPLATES="-t ~/.nuclei-templates/cves/ -t ~/.nuclei-templates/vulnerabilities/ -t ~/.nuclei-templates/exposures/"
               SEVERITY="-severity critical,high"
               RATE_LIMIT="-rl 100"
               ;;
             "critical")
-              TEMPLATES="-t cves/ -t vulnerabilities/"
+              TEMPLATES="-t ~/.nuclei-templates/cves/ -t ~/.nuclei-templates/vulnerabilities/"
               SEVERITY="-severity critical"
               RATE_LIMIT="-rl 150"
               ;;
             "full"|*)
-              TEMPLATES="-t ."  # All templates
+              TEMPLATES="-t ~/.nuclei-templates/"  # All templates
               SEVERITY="-severity critical,high,medium,low,info"
               RATE_LIMIT="-rl 50"
               ;;
@@ -218,7 +222,29 @@ jobs:
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
           OUTPUT_FILE="nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json"
           
-          echo "Starting Nuclei scan for batch ${BATCH_NUM}..."
+          echo "🎯 Starting Nuclei scan for batch ${BATCH_NUM}..."
+          echo "📁 Template directory contents:"
+          ls -la ~/.nuclei-templates/ | head -10
+          echo ""
+          echo "📊 Scan parameters:"
+          echo "   Templates: ${{ steps.scan-config.outputs.templates }}"
+          echo "   Severity: ${{ steps.scan-config.outputs.severity }}"
+          echo "   Rate limit: ${{ steps.scan-config.outputs.rate_limit }}"
+          echo "   Input file: ${{ steps.prepare-batch.outputs.batch_file }}"
+          echo "   Subdomains: ${{ steps.prepare-batch.outputs.subdomain_count }}"
+          echo ""
+          
+          # Verify template directories exist
+          if [ ! -d ~/.nuclei-templates ]; then
+            echo "❌ Template directory not found, trying to create it..."
+            mkdir -p ~/.nuclei-templates
+            nuclei -update-templates
+          fi
+          
+          # Show first few subdomains being scanned
+          echo "🎯 First 5 subdomains in batch:"
+          head -5 ${{ steps.prepare-batch.outputs.batch_file }}
+          echo ""
           
           nuclei \
             -l ${{ steps.prepare-batch.outputs.batch_file }} \
@@ -228,13 +254,13 @@ jobs:
             -j \
             -o "${OUTPUT_FILE}" \
             -stats \
-            -silent \
             -timeout 10 \
             -retries 2 \
             -bulk-size 50 \
             -c 25 \
             -header "User-Agent: Mozilla/5.0 (compatible; SecurityScanner/1.0)" \
             -exclude-tags dos,intrusive \
+            -v \
             || echo "Scan completed with some errors (exit code: $?)"
           
           # Check if results file exists and has content
