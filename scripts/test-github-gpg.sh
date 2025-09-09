@@ -56,7 +56,7 @@ EOF
 
 # Test encryption (same as workflow)
 echo "🔐 Testing encryption..."
-if gpg --batch --yes \
+if gpg --batch --yes --trust-model always \
        --recipient "$GPG_KEY_ID" \
        --encrypt --armor \
        --output "$TEST_DATA.gpg" \

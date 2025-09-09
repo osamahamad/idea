@@ -334,7 +334,7 @@ jobs:
           
           # Encrypt results file
           if [ -f "${{ env.results_file }}" ]; then
-            gpg --batch --yes \
+            gpg --batch --yes --trust-model always \
                 --recipient "${{ secrets.GPG_KEY_ID }}" \
                 --encrypt --armor \
                 --output "${{ env.results_file }}.gpg" \
@@ -344,7 +344,7 @@ jobs:
           
           # Encrypt summary file
           if [ -f "${{ env.summary_file }}" ]; then
-            gpg --batch --yes \
+            gpg --batch --yes --trust-model always \
                 --recipient "${{ secrets.GPG_KEY_ID }}" \
                 --encrypt --armor \
                 --output "${{ env.summary_file }}.gpg" \
@@ -567,7 +567,7 @@ jobs:
       - name: Encrypt consolidated report
         run: |
           if [ -f "${{ env.report_file }}" ]; then
-            gpg --batch --yes \
+            gpg --batch --yes --trust-model always \
                 --recipient "${{ secrets.GPG_KEY_ID }}" \
                 --encrypt --armor \
                 --output "${{ env.report_file }}.gpg" \
