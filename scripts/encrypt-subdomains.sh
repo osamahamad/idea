@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Encrypt subdomain files for secure storage in public repository
-# Usage: ./encrypt-subdomains.sh [subdomain-file]
+# Usage: ./encrypt-subdomains.sh [subdomain-file] [--validate]
 
 set -e
 
@@ -16,7 +16,8 @@ if [ ! -f "$SUBDOMAIN_FILE" ]; then
     echo "❌ Subdomain file not found: $SUBDOMAIN_FILE"
     echo ""
     echo "📝 Usage:"
-    echo "   ./encrypt-subdomains.sh [subdomain-file]"
+    echo "   ./encrypt-subdomains.sh [subdomain-file] [--validate]"
+    echo "   --validate: Run detailed subdomain validation (optional, slower for large files)"
     echo ""
     echo "📋 Expected format (one subdomain per line):"
     echo "   example.com"
@@ -49,45 +50,54 @@ if [ -z "${GPG_KEY_ID:-}" ]; then
     exit 1
 fi
 
-# Validate subdomain file
-echo "🔍 Validating subdomain file..."
+# Quick file check
+echo "📊 Analyzing subdomain file..."
 TOTAL_LINES=$(wc -l < "$SUBDOMAIN_FILE")
-VALID_SUBDOMAINS=0
-INVALID_LINES=0
 
-while IFS= read -r line; do
-    line=$(echo "$line" | tr -d '\r' | xargs)  # Remove carriage returns and whitespace
-    
-    # Skip empty lines
-    if [ -z "$line" ]; then
-        continue
-    fi
-    
-    # Basic subdomain validation
-    if echo "$line" | grep -qE '^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$'; then
-        VALID_SUBDOMAINS=$((VALID_SUBDOMAINS + 1))
-    else
-        INVALID_LINES=$((INVALID_LINES + 1))
-        if [ $INVALID_LINES -le 5 ]; then
-            echo "⚠️  Invalid subdomain: $line"
+echo "   Total lines: $TOTAL_LINES"
+echo "   File size: $(du -h "$SUBDOMAIN_FILE" | cut -f1)"
+
+# Optional validation (only if --validate flag is passed)
+if [[ "$*" == *"--validate"* ]]; then
+    echo "🔍 Running detailed validation (this may take time for large files)..."
+    VALID_SUBDOMAINS=0
+    INVALID_LINES=0
+
+    while IFS= read -r line; do
+        line=$(echo "$line" | tr -d '\r' | xargs)  # Remove carriage returns and whitespace
+        
+        # Skip empty lines
+        if [ -z "$line" ]; then
+            continue
+        fi
+        
+        # Basic subdomain validation
+        if echo "$line" | grep -qE '^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$'; then
+            VALID_SUBDOMAINS=$((VALID_SUBDOMAINS + 1))
+        else
+            INVALID_LINES=$((INVALID_LINES + 1))
+            if [ $INVALID_LINES -le 5 ]; then
+                echo "⚠️  Invalid subdomain: $line"
+            fi
+        fi
+    done < "$SUBDOMAIN_FILE"
+
+    echo "📊 Validation Results:"
+    echo "   Valid subdomains: $VALID_SUBDOMAINS"
+    echo "   Invalid entries: $INVALID_LINES"
+
+    if [ $INVALID_LINES -gt 0 ]; then
+        echo ""
+        echo "⚠️  Warning: Found $INVALID_LINES invalid entries"
+        echo "🤔 Do you want to continue anyway? (y/N)"
+        read -r CONTINUE
+        if [[ ! "$CONTINUE" =~ ^[Yy]$ ]]; then
+            echo "❌ Encryption cancelled"
+            exit 1
         fi
     fi
-done < "$SUBDOMAIN_FILE"
-
-echo "📊 Validation Results:"
-echo "   Total lines: $TOTAL_LINES"
-echo "   Valid subdomains: $VALID_SUBDOMAINS"
-echo "   Invalid entries: $INVALID_LINES"
-
-if [ $INVALID_LINES -gt 0 ]; then
-    echo ""
-    echo "⚠️  Warning: Found $INVALID_LINES invalid entries"
-    echo "🤔 Do you want to continue anyway? (y/N)"
-    read -r CONTINUE
-    if [[ ! "$CONTINUE" =~ ^[Yy]$ ]]; then
-        echo "❌ Encryption cancelled"
-        exit 1
-    fi
+else
+    echo "   Skipping validation (use --validate flag for detailed validation)"
 fi
 
 # Check if output file already exists

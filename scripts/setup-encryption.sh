@@ -33,7 +33,7 @@ Subkey-Length: 4096
 Name-Real: Nuclei Scanner
 Name-Email: nuclei-scanner@yourdomain.com
 Expire-Date: 2y
-Passphrase: 
+%no-protection
 %commit
 EOF
 

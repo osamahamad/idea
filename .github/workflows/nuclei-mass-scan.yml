@@ -45,17 +45,32 @@ jobs:
 
       - name: Setup GPG for decryption
         run: |
+          # Import GPG keys
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
           echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --batch --import
-          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --import-ownertrust
+          
+          # Set ultimate trust for the key (with error handling)
+          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --batch --import-ownertrust 2>/dev/null || true
+          
+          # Verify GPG setup
+          gpg --list-secret-keys --keyid-format LONG
 
       - name: Decrypt subdomain file
         run: |
           if [ -f "subdomains/all-subdomains.txt.gpg" ]; then
-            gpg --batch --yes --quiet --decrypt "subdomains/all-subdomains.txt.gpg" > "subdomains/all-subdomains.txt"
-            echo "Subdomain file decrypted successfully"
+            # Decrypt with trust model override
+            gpg --batch --yes --quiet --trust-model always --decrypt "subdomains/all-subdomains.txt.gpg" > "subdomains/all-subdomains.txt"
+            
+            # Verify decryption worked
+            if [ -s "subdomains/all-subdomains.txt" ]; then
+              LINES=$(wc -l < "subdomains/all-subdomains.txt")
+              echo "✅ Subdomain file decrypted successfully - $LINES lines"
+            else
+              echo "❌ Decryption failed - output file is empty"
+              exit 1
+            fi
           else
-            echo "Error: subdomains/all-subdomains.txt.gpg not found"
+            echo "❌ Error: subdomains/all-subdomains.txt.gpg not found"
             echo "Please encrypt your subdomain file using: gpg --encrypt --armor --recipient \$GPG_KEY_ID subdomains/all-subdomains.txt"
             exit 1
           fi
@@ -117,14 +132,20 @@ jobs:
 
       - name: Setup GPG for decryption
         run: |
+          # Import GPG keys
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
           echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --batch --import
-          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --import-ownertrust
+          
+          # Set ultimate trust for the key (with error handling)
+          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --batch --import-ownertrust 2>/dev/null || true
+          
+          # Verify GPG setup
+          gpg --list-secret-keys --keyid-format LONG
 
       - name: Decrypt subdomain file
         run: |
           if [ -f "subdomains/all-subdomains.txt.gpg" ]; then
-            gpg --batch --yes --quiet --decrypt "subdomains/all-subdomains.txt.gpg" > "subdomains/all-subdomains.txt"
+            gpg --batch --yes --quiet --trust-model always --decrypt "subdomains/all-subdomains.txt.gpg" > "subdomains/all-subdomains.txt"
             echo "Subdomain file decrypted successfully"
           else
             echo "Error: subdomains/all-subdomains.txt.gpg not found"
@@ -361,7 +382,7 @@ jobs:
             if [ -f "output/latest/scan_summary_batch_${BATCH_NUM}_latest.json.gpg" ]; then
               # Try to get findings count from encrypted summary (will show 0 if can't decrypt)
               TEMP_SUMMARY=$(mktemp)
-              if gpg --batch --yes --quiet --decrypt "output/latest/scan_summary_batch_${BATCH_NUM}_latest.json.gpg" > "$TEMP_SUMMARY" 2>/dev/null; then
+              if gpg --batch --yes --quiet --trust-model always --decrypt "output/latest/scan_summary_batch_${BATCH_NUM}_latest.json.gpg" > "$TEMP_SUMMARY" 2>/dev/null; then
                 FINDINGS_COUNT=$(jq -r '.results_summary.total_findings // 0' "$TEMP_SUMMARY" 2>/dev/null || echo "0")
               fi
               rm -f "$TEMP_SUMMARY"
@@ -460,7 +481,7 @@ jobs:
             if [ -f "$summary_file" ]; then
               # Decrypt summary
               DECRYPTED_SUMMARY=$(mktemp)
-              gpg --batch --yes --quiet --decrypt "$summary_file" > "$DECRYPTED_SUMMARY" 2>/dev/null
+              gpg --batch --yes --quiet --trust-model always --decrypt "$summary_file" > "$DECRYPTED_SUMMARY" 2>/dev/null
               
               if [ -s "$DECRYPTED_SUMMARY" ]; then
                 # Extract values from summary
@@ -580,7 +601,7 @@ jobs:
         run: |
           # Decrypt report for summary (without storing unencrypted version)
           TEMP_REPORT=$(mktemp)
-          gpg --batch --yes --quiet --decrypt "${{ env.report_file }}.gpg" > "$TEMP_REPORT" 2>/dev/null
+          gpg --batch --yes --quiet --trust-model always --decrypt "${{ env.report_file }}.gpg" > "$TEMP_REPORT" 2>/dev/null
           
           if [ -s "$TEMP_REPORT" ]; then
             TOTAL_FINDINGS=$(jq -r '.overall_summary.total_findings' "$TEMP_REPORT")
