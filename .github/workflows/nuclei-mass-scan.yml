@@ -163,13 +163,24 @@ jobs:
           # Update templates and show where they're stored
           nuclei -update-templates
           
-          # Verify templates are available
-          TEMPLATE_COUNT=$(find ~/.nuclei-templates -name "*.yaml" -o -name "*.yml" | wc -l)
-          echo "✅ Template update completed - $TEMPLATE_COUNT templates available"
+          # Check both possible locations
+          echo "🔍 Checking template locations..."
+          for template_dir in ~/nuclei-templates ~/.nuclei-templates; do
+            if [ -d "$template_dir" ]; then
+              TEMPLATE_COUNT=$(find "$template_dir" -name "*.yaml" -o -name "*.yml" 2>/dev/null | wc -l)
+              echo "📁 Found $TEMPLATE_COUNT templates at: $template_dir"
+              ls -la "$template_dir" | head -5
+              echo "NUCLEI_TEMPLATES_PATH=$template_dir" >> $GITHUB_ENV
+              break
+            fi
+          done
           
-          # List template directories
-          echo "📁 Template directories:"
-          ls -la ~/.nuclei-templates/ || echo "Templates directory not found"
+          # If still not found, check what nuclei created
+          if [ -z "${NUCLEI_TEMPLATES_PATH:-}" ]; then
+            echo "🔍 Searching for templates in common locations..."
+            find /home/runner -name "*.yaml" -path "*/nuclei-templates/*" | head -5
+            find ~ -name nuclei-templates -type d 2>/dev/null
+          fi
 
       - name: Prepare subdomain batch
         id: prepare-batch
@@ -193,19 +204,34 @@ jobs:
         run: |
           PROFILE="${{ github.event.inputs.scan_profile || 'full' }}"
           
+          # Use detected template path or default
+          TEMPLATE_DIR="${NUCLEI_TEMPLATES_PATH:-~/nuclei-templates}"
+          
+          # Verify template directory exists
+          if [ ! -d "$TEMPLATE_DIR" ]; then
+            echo "⚠️ Template directory not found at $TEMPLATE_DIR, trying alternatives..."
+            for alt_dir in ~/nuclei-templates ~/.nuclei-templates /home/runner/nuclei-templates; do
+              if [ -d "$alt_dir" ]; then
+                TEMPLATE_DIR="$alt_dir"
+                echo "✅ Using template directory: $TEMPLATE_DIR"
+                break
+              fi
+            done
+          fi
+          
           case $PROFILE in
             "quick")
-              TEMPLATES="-t ~/.nuclei-templates/cves/ -t ~/.nuclei-templates/vulnerabilities/ -t ~/.nuclei-templates/exposures/"
+              TEMPLATES="-t $TEMPLATE_DIR/cves/ -t $TEMPLATE_DIR/vulnerabilities/ -t $TEMPLATE_DIR/exposures/"
               SEVERITY="-severity critical,high"
               RATE_LIMIT="-rl 100"
               ;;
             "critical")
-              TEMPLATES="-t ~/.nuclei-templates/cves/ -t ~/.nuclei-templates/vulnerabilities/"
+              TEMPLATES="-t $TEMPLATE_DIR/cves/ -t $TEMPLATE_DIR/vulnerabilities/"
               SEVERITY="-severity critical"
               RATE_LIMIT="-rl 150"
               ;;
             "full"|*)
-              TEMPLATES="-t ~/.nuclei-templates/"  # All templates
+              TEMPLATES="-t $TEMPLATE_DIR/"  # All templates
               SEVERITY="-severity critical,high,medium,low,info"
               RATE_LIMIT="-rl 50"
               ;;
@@ -223,8 +249,19 @@ jobs:
           OUTPUT_FILE="nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json"
           
           echo "🎯 Starting Nuclei scan for batch ${BATCH_NUM}..."
-          echo "📁 Template directory contents:"
-          ls -la ~/.nuclei-templates/ | head -10
+          
+          # Debug template locations
+          echo "🔍 Template debugging:"
+          for template_dir in ~/nuclei-templates ~/.nuclei-templates /home/runner/nuclei-templates; do
+            if [ -d "$template_dir" ]; then
+              TEMPLATE_COUNT=$(find "$template_dir" -name "*.yaml" -o -name "*.yml" 2>/dev/null | wc -l)
+              echo "   📁 $template_dir: $TEMPLATE_COUNT templates"
+              ls -la "$template_dir" | head -3
+            else
+              echo "   ❌ $template_dir: Not found"
+            fi
+          done
+          
           echo ""
           echo "📊 Scan parameters:"
           echo "   Templates: ${{ steps.scan-config.outputs.templates }}"
@@ -234,17 +271,21 @@ jobs:
           echo "   Subdomains: ${{ steps.prepare-batch.outputs.subdomain_count }}"
           echo ""
           
-          # Verify template directories exist
-          if [ ! -d ~/.nuclei-templates ]; then
-            echo "❌ Template directory not found, trying to create it..."
-            mkdir -p ~/.nuclei-templates
-            nuclei -update-templates
-          fi
-          
           # Show first few subdomains being scanned
-          echo "🎯 First 5 subdomains in batch:"
-          head -5 ${{ steps.prepare-batch.outputs.batch_file }}
+          echo "🎯 First 3 subdomains in batch:"
+          head -3 ${{ steps.prepare-batch.outputs.batch_file }}
           echo ""
+          
+          # Fallback: if no templates found anywhere, download manually
+          TEMPLATE_CHECK=$(echo "${{ steps.scan-config.outputs.templates }}" | xargs -n1 | head -1 | sed 's/-t //')
+          if [ ! -d "$TEMPLATE_CHECK" ]; then
+            echo "⚠️ Template directory not accessible, downloading manually..."
+            mkdir -p ~/nuclei-templates
+            cd ~/nuclei-templates
+            curl -sL https://api.github.com/repos/projectdiscovery/nuclei-templates/tarball/main | tar xz --strip-components=1 2>/dev/null || echo "Manual download failed"
+            cd -
+            echo "📦 Manual template download attempted"
+          fi
           
           nuclei \
             -l ${{ steps.prepare-batch.outputs.batch_file }} \
@@ -658,7 +699,7 @@ jobs:
           | Info     | ${INFO} |
           
           ## 🔒 Security
-          All results have been encrypted with GPG and are available as artifacts.
+          All results have been encrypted with GPG and are available as artigitfacts.
           
           ## 📁 Artifacts
           - \`consolidated-encrypted-report\`: Complete scan report (encrypted)
