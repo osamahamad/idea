@@ -27,7 +27,7 @@ on:
     - cron: '0 2 * * *'
 
 env:
-  BATCH_SIZE: 500  # Reduced batch size for faster completion
+  BATCH_SIZE: 100  # Reduced batch size for faster completion
   MAX_PARALLEL_JOBS: 15  # Conservative limit to avoid GitHub rate limits
   NUCLEI_VERSION: "v3.1.0"
   RESULTS_BRANCH: "scan-results"  # Dedicated branch for storing results
@@ -165,7 +165,7 @@ jobs:
           
           # Check both possible locations
           echo "🔍 Checking template locations..."
-          for template_dir in ~/nuclei-templates ~/.nuclei-templates; do
+          for template_dir in ~/nuclei-templates ; do
             if [ -d "$template_dir" ]; then
               TEMPLATE_COUNT=$(find "$template_dir" -name "*.yaml" -o -name "*.yml" 2>/dev/null | wc -l)
               echo "📁 Found $TEMPLATE_COUNT templates at: $template_dir"
@@ -210,7 +210,7 @@ jobs:
           # Verify template directory exists
           if [ ! -d "$TEMPLATE_DIR" ]; then
             echo "⚠️ Template directory not found at $TEMPLATE_DIR, trying alternatives..."
-            for alt_dir in ~/nuclei-templates ~/.nuclei-templates /home/runner/nuclei-templates; do
+            for alt_dir in ~/nuclei-templates /home/runner/nuclei-templates; do
               if [ -d "$alt_dir" ]; then
                 TEMPLATE_DIR="$alt_dir"
                 echo "✅ Using template directory: $TEMPLATE_DIR"
@@ -256,7 +256,7 @@ jobs:
           
           # Debug template locations
           echo "🔍 Template debugging:"
-          for template_dir in ~/nuclei-templates ~/.nuclei-templates /home/runner/nuclei-templates; do
+          for template_dir in ~/nuclei-templates /home/runner/nuclei-templates; do
             if [ -d "$template_dir" ]; then
               TEMPLATE_COUNT=$(find "$template_dir" -name "*.yaml" -o -name "*.yml" 2>/dev/null | wc -l)
               echo "   📁 $template_dir: $TEMPLATE_COUNT templates"
