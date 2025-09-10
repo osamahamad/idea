@@ -27,7 +27,7 @@ on:
     - cron: '0 2 * * *'
 
 env:
-  BATCH_SIZE: 1000  # Subdomains per batch
+  BATCH_SIZE: 500  # Reduced batch size for faster completion
   MAX_PARALLEL_JOBS: 15  # Conservative limit to avoid GitHub rate limits
   NUCLEI_VERSION: "v3.1.0"
   RESULTS_BRANCH: "scan-results"  # Dedicated branch for storing results
@@ -117,7 +117,7 @@ jobs:
     needs: prepare-batches
     if: needs.prepare-batches.outputs.matrix != '[]'
     runs-on: ubuntu-latest
-    timeout-minutes: 350  # 5h 50m to stay under 6h limit
+    timeout-minutes: 300  # 5h to allow buffer for cleanup
     strategy:
       fail-fast: false
       max-parallel: 15  # Conservative limit to avoid GitHub rate limits
@@ -223,24 +223,28 @@ jobs:
             "quick")
               TEMPLATES="-t $TEMPLATE_DIR/cves/ -t $TEMPLATE_DIR/vulnerabilities/ -t $TEMPLATE_DIR/exposures/"
               SEVERITY="-severity critical,high"
-              RATE_LIMIT="-rl 100"
+              RATE_LIMIT="-rl 500"
+              TIMEOUT="-timeout 5"
               ;;
             "critical")
               TEMPLATES="-t $TEMPLATE_DIR/cves/ -t $TEMPLATE_DIR/vulnerabilities/"
               SEVERITY="-severity critical"
-              RATE_LIMIT="-rl 150"
+              RATE_LIMIT="-rl 550"
+              TIMEOUT="-timeout 5"
               ;;
             "full"|*)
               TEMPLATES="-t $TEMPLATE_DIR/"  # All templates
               SEVERITY="-severity critical,high,medium,low,info"
-              RATE_LIMIT="-rl 50"
+              RATE_LIMIT="-rl 550"
+              TIMEOUT="-timeout 8"
               ;;
           esac
           
           echo "templates=${TEMPLATES}" >> $GITHUB_OUTPUT
           echo "severity=${SEVERITY}" >> $GITHUB_OUTPUT
           echo "rate_limit=${RATE_LIMIT}" >> $GITHUB_OUTPUT
-          echo "Configured for ${PROFILE} scan profile"
+          echo "timeout=${TIMEOUT}" >> $GITHUB_OUTPUT
+          echo "Configured for ${PROFILE} scan profile with ${TIMEOUT} timeout"
 
       - name: Run Nuclei scan
         run: |
@@ -267,6 +271,7 @@ jobs:
           echo "   Templates: ${{ steps.scan-config.outputs.templates }}"
           echo "   Severity: ${{ steps.scan-config.outputs.severity }}"
           echo "   Rate limit: ${{ steps.scan-config.outputs.rate_limit }}"
+          echo "   Timeout: ${{ steps.scan-config.outputs.timeout }}"
           echo "   Input file: ${{ steps.prepare-batch.outputs.batch_file }}"
           echo "   Subdomains: ${{ steps.prepare-batch.outputs.subdomain_count }}"
           echo ""
@@ -292,16 +297,16 @@ jobs:
             ${{ steps.scan-config.outputs.templates }} \
             ${{ steps.scan-config.outputs.severity }} \
             ${{ steps.scan-config.outputs.rate_limit }} \
+            ${{ steps.scan-config.outputs.timeout }} \
             -j \
             -o "${OUTPUT_FILE}" \
             -stats \
-            -timeout 10 \
-            -retries 2 \
-            -bulk-size 50 \
-            -c 25 \
+            -retries 1 \
+            -bulk-size 100 \
+            -c 50 \
             -header "User-Agent: Mozilla/5.0 (compatible; SecurityScanner/1.0)" \
-            -exclude-tags dos,intrusive \
-            -v \
+            -exclude-tags dos,intrusive,brute-force \
+            -max-host-error 5 \
             || echo "Scan completed with some errors (exit code: $?)"
           
           # Check if results file exists and has content
