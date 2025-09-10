@@ -227,14 +227,14 @@ jobs:
               TIMEOUT="-timeout 5"
               ;;
             "critical")
-              TEMPLATES="-t $TEMPLATE_DIR/cves/ -t $TEMPLATE_DIR/vulnerabilities/"
+              TEMPLATES="-t $TEMPLATE_DIR"
               SEVERITY="-severity critical"
               RATE_LIMIT="-rl 550"
               TIMEOUT="-timeout 5"
               ;;
             "full"|*)
               TEMPLATES="-t $TEMPLATE_DIR/"  # All templates
-              SEVERITY="-severity critical,high,medium,low,info"
+              SEVERITY="-severity critical,high,medium,low"
               RATE_LIMIT="-rl 550"
               TIMEOUT="-timeout 8"
               ;;
