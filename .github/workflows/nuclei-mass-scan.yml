@@ -413,6 +413,9 @@ jobs:
           git config --global user.name "Nuclei Scanner Bot"
           git config --global user.email "nuclei-scanner@github-actions.bot"
           
+          # Set up authentication
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          
           # Create results branch if it doesn't exist
           git fetch origin ${{ env.RESULTS_BRANCH }} || git checkout -b ${{ env.RESULTS_BRANCH }}
           git checkout ${{ env.RESULTS_BRANCH }} || git checkout -b ${{ env.RESULTS_BRANCH }}
