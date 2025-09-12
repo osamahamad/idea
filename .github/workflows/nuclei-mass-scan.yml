@@ -222,9 +222,9 @@ jobs:
           case $PROFILE in
             "quick")
               TEMPLATES="-t $TEMPLATE_DIR/cves/ -t $TEMPLATE_DIR/vulnerabilities/ -t $TEMPLATE_DIR/exposures/"
-              SEVERITY="-severity info"
-              RATE_LIMIT="-rl 500"
-              TIMEOUT="-timeout 5"
+              SEVERITY="-severity critical,high,medium"
+              RATE_LIMIT="-rl 1000"
+              TIMEOUT="-timeout 3"
               ;;
             "critical")
               TEMPLATES="-t $TEMPLATE_DIR"
@@ -311,11 +311,17 @@ jobs:
           
           # Check if results file exists and has content
           if [ -f "${OUTPUT_FILE}" ] && [ -s "${OUTPUT_FILE}" ]; then
-            echo "Scan results generated: ${OUTPUT_FILE}"
-            echo "Results count: $(wc -l < ${OUTPUT_FILE})"
+            echo "✅ Scan results generated: ${OUTPUT_FILE}"
+            echo "📊 Results count: $(wc -l < ${OUTPUT_FILE})"
+            echo "🔍 First few results:"
+            head -3 "${OUTPUT_FILE}" || echo "Could not display results"
             echo "results_file=${OUTPUT_FILE}" >> $GITHUB_ENV
           else
-            echo "No results found for batch ${BATCH_NUM}"
+            echo "❌ No results found for batch ${BATCH_NUM}"
+            echo "📁 Checking if output file exists:"
+            ls -la "${OUTPUT_FILE}" 2>/dev/null || echo "Output file does not exist"
+            echo "📁 Current directory contents:"
+            ls -la *.json 2>/dev/null || echo "No JSON files found"
             echo '[]' > "${OUTPUT_FILE}"
             echo "results_file=${OUTPUT_FILE}" >> $GITHUB_ENV
           fi
@@ -422,13 +428,19 @@ jobs:
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
           
           # Move encrypted files to organized directory structure
-          if [ -f "nuclei_results_batch_${BATCH_NUM}_*.json.gpg" ]; then
-            mv nuclei_results_batch_${BATCH_NUM}_*.json.gpg "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg"
-          fi
+          for file in nuclei_results_batch_${BATCH_NUM}_*.json.gpg; do
+            if [ -f "$file" ]; then
+              mv "$file" "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg"
+              echo "Moved results file: $file"
+            fi
+          done
           
-          if [ -f "scan_summary_batch_${BATCH_NUM}_*.json.gpg" ]; then
-            mv scan_summary_batch_${BATCH_NUM}_*.json.gpg "${DATE_DIR}/scan_summary_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg"
-          fi
+          for file in scan_summary_batch_${BATCH_NUM}_*.json.gpg; do
+            if [ -f "$file" ]; then
+              mv "$file" "${DATE_DIR}/scan_summary_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg"
+              echo "Moved summary file: $file"
+            fi
+          done
           
           # Also copy to latest directory for easy access
           if [ -f "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg" ]; then
