@@ -221,8 +221,8 @@ jobs:
           
           case $PROFILE in
             "quick")
-              TEMPLATES="-t $TEMPLATE_DIR/cves/ -t $TEMPLATE_DIR/vulnerabilities/ -t $TEMPLATE_DIR/exposures/"
-              SEVERITY="-severity critical,high,medium"
+              TEMPLATES="-t $TEMPLATE_DIR"
+              SEVERITY="-severity info"
               RATE_LIMIT="-rl 1000"
               TIMEOUT="-timeout 3"
               ;;
