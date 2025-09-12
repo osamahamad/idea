@@ -27,7 +27,7 @@ on:
     - cron: '0 2 * * *'
 
 env:
-  BATCH_SIZE: 500  # Reduced batch size for faster completion
+  BATCH_SIZE: 50  # Reduced batch size for faster completion
   MAX_PARALLEL_JOBS: 15  # Conservative limit to avoid GitHub rate limits
   NUCLEI_VERSION: "v3.1.0"
   RESULTS_BRANCH: "scan-results"  # Dedicated branch for storing results
