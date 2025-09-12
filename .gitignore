@@ -6,10 +6,10 @@ subdomains/batch_*.txt
 !subdomains/.gitkeep
 
 # 🔐 SECURITY: Never commit unencrypted results
-output/*.json
-results/*.json
-*.json
-!*.json.gpg
+# output/*.json
+# results/*.json
+# *.json
+# !*.json.gpg
 
 # 🔐 SECURITY: Never commit GPG private keys
 *.asc
