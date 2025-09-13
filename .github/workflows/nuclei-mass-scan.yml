@@ -254,7 +254,6 @@ jobs:
           OUTPUT_TXT="nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.txt"
           
           echo "🎯 Starting Nuclei scan for batch ${BATCH_NUM}..."
-          echo "☁️ Nuclei Cloud integration enabled with dashboard"
           
           # Debug template locations
           echo "🔍 Template debugging:"
@@ -294,27 +293,29 @@ jobs:
             echo "📦 Manual template download attempted"
           fi
           
-           # Run Nuclei scan with both JSON and text output
-           export PDCP_API_KEY="${{ secrets.PROJECTDISCOVERY_API_KEY }}"
-           nuclei \
-             -l ${{ steps.prepare-batch.outputs.batch_file }} \
-             ${{ steps.scan-config.outputs.templates }} \
-             ${{ steps.scan-config.outputs.severity }} \
-             ${{ steps.scan-config.outputs.rate_limit }} \
-             ${{ steps.scan-config.outputs.timeout }} \
-             -no-color \
-             -jle "${OUTPUT_JSON}" \
-             -o "${OUTPUT_TXT}" \
-             -stats \
-             -retries 1 \
-             -bulk-size 100 \
-             -c 50 \
-             -header "User-Agent: Mozilla/5.0 (compatible; SecurityScanner/1.0)" \
-             -exclude-tags dos,intrusive,brute-force \
-             -max-host-error 5 \
-             -auth true \
-             -dashboard \
-             -team-id ctc6cl3sphctogp11qc0 
+          # Run Nuclei scan with both JSON and text output
+          export PDCP_API_KEY="${{ secrets.PROJECTDISCOVERY_API_KEY }}";
+          nuclei \
+            -l ${{ steps.prepare-batch.outputs.batch_file }} \
+            ${{ steps.scan-config.outputs.templates }} \
+            ${{ steps.scan-config.outputs.severity }} \
+            ${{ steps.scan-config.outputs.rate_limit }} \
+            ${{ steps.scan-config.outputs.timeout }} \
+            -j \
+            -o "${OUTPUT_JSON}" \
+            -o "${OUTPUT_TXT}" \
+            -stats \
+            -retries 1 \
+            -bulk-size 100 \
+            -c 50 \
+            -header "User-Agent: Mozilla/5.0 (compatible; SecurityScanner/1.0)" \
+            -exclude-tags dos,intrusive,brute-force \
+            -max-host-error 5 \
+            -auth true \
+            -dashboard \
+            -team-id ctc6cl3sphctogp11qc0 \
+            -cloud-upload \
+            || echo "Scan completed with some errors (exit code: $?)"
           
           # Check if results files exist and have content
           if [ -f "${OUTPUT_JSON}" ] && [ -s "${OUTPUT_JSON}" ]; then
@@ -741,7 +742,6 @@ jobs:
           - **Total Subdomains Scanned**: ${SUBDOMAINS}
           - **Batches Processed**: ${BATCHES}
           - **Total Findings**: ${TOTAL_FINDINGS}
-          - **Dashboard**: [View in Nuclei Cloud](https://cloud.nuclei.sh) (if API key configured)
           
           ## 🚨 Findings by Severity
           | Severity | Count |
