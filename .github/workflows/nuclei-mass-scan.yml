@@ -675,6 +675,13 @@ jobs:
           
       - name: Commit consolidated results
         run: |
+          # Configure git
+          git config --global user.name "Nuclei Scanner Bot Output"
+          git config --global user.email "nuclei-scanner@github-actions.bot"
+          
+          # Ensure we're on the results branch
+          git checkout ${{ env.RESULTS_BRANCH }} || git checkout -b ${{ env.RESULTS_BRANCH }}
+          
           # Add consolidated files
           git add output/
           
