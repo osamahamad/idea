@@ -254,6 +254,7 @@ jobs:
           OUTPUT_TXT="nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.txt"
           
           echo "🎯 Starting Nuclei scan for batch ${BATCH_NUM}..."
+          echo "☁️ Nuclei Cloud integration enabled with dashboard"
           
           # Debug template locations
           echo "🔍 Template debugging:"
@@ -310,6 +311,8 @@ jobs:
             -header "User-Agent: Mozilla/5.0 (compatible; SecurityScanner/1.0)" \
             -exclude-tags dos,intrusive,brute-force \
             -max-host-error 5 \
+            -auth "${{ secrets.PROJECTDISCOVERY_API_KEY }}" \
+            -dashboard \
             || echo "Scan completed with some errors (exit code: $?)"
           
           # Check if results files exist and have content
@@ -737,6 +740,7 @@ jobs:
           - **Total Subdomains Scanned**: ${SUBDOMAINS}
           - **Batches Processed**: ${BATCHES}
           - **Total Findings**: ${TOTAL_FINDINGS}
+          - **Dashboard**: [View in Nuclei Cloud](https://cloud.nuclei.sh) (if API key configured)
           
           ## 🚨 Findings by Severity
           | Severity | Count |

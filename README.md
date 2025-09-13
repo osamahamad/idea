@@ -441,7 +441,28 @@ This will:
 - Export the keys
 - Provide instructions for GitHub Secrets setup
 
-### 3. GitHub Secrets Configuration
+### 3. Nuclei Cloud Integration (Optional but Recommended)
+
+For real-time dashboard monitoring and cloud storage:
+
+1. **Get ProjectDiscovery API Key:**
+   - Sign up at [https://cloud.nuclei.sh](https://cloud.nuclei.sh)
+   - Generate API key from Settings → API Keys
+
+2. **Add to GitHub Secrets:**
+   - Go to your repo → Settings → Secrets and variables → Actions
+   - Add secret: `PROJECTDISCOVERY_API_KEY`
+   - Value: Your API key (starts with `nuclei_`)
+
+3. **Benefits:**
+   - Real-time scan monitoring
+   - Cloud-based result storage
+   - Historical data and trends
+   - Better debugging and error reporting
+
+See [NUCLEI-CLOUD-SETUP.md](NUCLEI-CLOUD-SETUP.md) for detailed setup instructions.
+
+### 4. GitHub Secrets Configuration
 
 Add these secrets to your repository (Settings → Secrets and variables → Actions):
 
@@ -450,6 +471,7 @@ Add these secrets to your repository (Settings → Secrets and variables → Act
 | `GPG_PRIVATE_KEY` | Private GPG key for encryption | Content of `private-key.asc` |
 | `GPG_PUBLIC_KEY` | Public GPG key | Content of `public-key.asc` |
 | `GPG_KEY_ID` | GPG key identifier | Key ID from setup script |
+| `PROJECTDISCOVERY_API_KEY` | Nuclei Cloud API key (optional) | API key from [cloud.nuclei.sh](https://cloud.nuclei.sh) |
 
 ### 4. Subdomain Preparation
 
