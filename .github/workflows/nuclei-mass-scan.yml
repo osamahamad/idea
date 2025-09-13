@@ -312,7 +312,7 @@ jobs:
             -exclude-tags dos,intrusive,brute-force \
             -max-host-error 5 \
             -auth "${{ secrets.PROJECTDISCOVERY_API_KEY }}" \
-            -cloud-upload \
+            -dashboard \
             -tid ctc6cl3sphctogp11qc0 \
             || echo "Scan completed with some errors (exit code: $?)"
           
@@ -486,113 +486,6 @@ jobs:
             cp "${DATE_DIR}/scan_summary_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg" "output/latest/scan_summary_batch_${BATCH_NUM}_latest.json.gpg"
           fi
 
-      - name: Create consolidated results (all batches combined)
-        run: |
-          BATCH_NUM=${{ matrix.batch }}
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          
-          echo "🔄 Creating consolidated results for all batches..."
-          
-          # Create consolidated JSON file (combine all batch JSON results)
-          CONSOLIDATED_JSON="all_latest_nuclei_results.json"
-          CONSOLIDATED_TXT="all_latest_nuclei_results.txt"
-          
-          # Initialize consolidated files
-          echo "[]" > "$CONSOLIDATED_JSON"
-          echo "# Nuclei Scan Results - All Batches Combined" > "$CONSOLIDATED_TXT"
-          echo "# Generated: $(date)" >> "$CONSOLIDATED_TXT"
-          echo "# Workflow: ${{ github.workflow }}" >> "$CONSOLIDATED_TXT"
-          echo "# Run ID: ${{ github.run_id }}" >> "$CONSOLIDATED_TXT"
-          echo "" >> "$CONSOLIDATED_TXT"
-          
-          # Process all existing batch results in latest directory
-          if [ -d "output/latest" ]; then
-            # Combine all JSON results
-            for json_file in output/latest/nuclei_results_batch_*_latest.json.gpg; do
-              if [ -f "$json_file" ]; then
-                echo "Processing JSON: $json_file"
-                TEMP_JSON=$(mktemp)
-                if gpg --batch --yes --quiet --trust-model always --decrypt "$json_file" > "$TEMP_JSON" 2>/dev/null; then
-                  # Merge JSON results
-                  jq -s '.[0] + .[1]' "$CONSOLIDATED_JSON" "$TEMP_JSON" > "${CONSOLIDATED_JSON}.tmp" && mv "${CONSOLIDATED_JSON}.tmp" "$CONSOLIDATED_JSON"
-                fi
-                rm -f "$TEMP_JSON"
-              fi
-            done
-            
-            # Combine all text results
-            for txt_file in output/latest/nuclei_results_batch_*_latest.txt.gpg; do
-              if [ -f "$txt_file" ]; then
-                echo "Processing text: $txt_file"
-                TEMP_TXT=$(mktemp)
-                if gpg --batch --yes --quiet --trust-model always --decrypt "$txt_file" > "$TEMP_TXT" 2>/dev/null; then
-                  echo "=== BATCH RESULTS ===" >> "$CONSOLIDATED_TXT"
-                  cat "$TEMP_TXT" >> "$CONSOLIDATED_TXT"
-                  echo "" >> "$CONSOLIDATED_TXT"
-                fi
-                rm -f "$TEMP_TXT"
-              fi
-            done
-          fi
-          
-          # Remove duplicates and sort
-          echo "🔧 Removing duplicates and sorting results..."
-          
-          # Sort and deduplicate JSON results
-          if [ -f "$CONSOLIDATED_JSON" ] && [ -s "$CONSOLIDATED_JSON" ]; then
-            jq 'unique_by(.host + .info.name + .info.severity)' "$CONSOLIDATED_JSON" > "${CONSOLIDATED_JSON}.tmp" && mv "${CONSOLIDATED_JSON}.tmp" "$CONSOLIDATED_JSON"
-            echo "✅ JSON results deduplicated: $(wc -l < "$CONSOLIDATED_JSON") unique findings"
-          fi
-          
-          # Sort and deduplicate text results
-          if [ -f "$CONSOLIDATED_TXT" ] && [ -s "$CONSOLIDATED_TXT" ]; then
-            sort -u "$CONSOLIDATED_TXT" > "${CONSOLIDATED_TXT}.tmp" && mv "${CONSOLIDATED_TXT}.tmp" "$CONSOLIDATED_TXT"
-            echo "✅ Text results deduplicated: $(wc -l < "$CONSOLIDATED_TXT") lines"
-          fi
-          
-          echo "📊 Consolidated files created:"
-          echo "   📄 JSON: $CONSOLIDATED_JSON ($(wc -l < "$CONSOLIDATED_JSON") lines)"
-          echo "   📄 Text: $CONSOLIDATED_TXT ($(wc -l < "$CONSOLIDATED_TXT") lines)"
-
-      - name: Encrypt consolidated results
-        run: |
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          
-          # Encrypt consolidated JSON
-          if [ -f "all_latest_nuclei_results.json" ]; then
-            gpg --batch --yes --trust-model always \
-                --recipient "${{ secrets.GPG_KEY_ID }}" \
-                --encrypt --armor \
-                --output "all_latest_nuclei_results.json.gpg" \
-                "all_latest_nuclei_results.json"
-            echo "✅ Consolidated JSON encrypted: all_latest_nuclei_results.json.gpg"
-          fi
-          
-          # Encrypt consolidated text
-          if [ -f "all_latest_nuclei_results.txt" ]; then
-            gpg --batch --yes --trust-model always \
-                --recipient "${{ secrets.GPG_KEY_ID }}" \
-                --encrypt --armor \
-                --output "all_latest_nuclei_results.txt.gpg" \
-                "all_latest_nuclei_results.txt"
-            echo "✅ Consolidated text encrypted: all_latest_nuclei_results.txt.gpg"
-          fi
-          
-          # Clean up unencrypted files
-          rm -f all_latest_nuclei_results.json all_latest_nuclei_results.txt
-
-      - name: Store consolidated results in output
-        run: |
-          # Move consolidated encrypted files to output directory
-          if [ -f "all_latest_nuclei_results.json.gpg" ]; then
-            mv "all_latest_nuclei_results.json.gpg" "output/"
-            echo "✅ Consolidated JSON stored in output/"
-          fi
-          
-          if [ -f "all_latest_nuclei_results.txt.gpg" ]; then
-            mv "all_latest_nuclei_results.txt.gpg" "output/"
-            echo "✅ Consolidated text stored in output/"
-          fi
 
       - name: Commit and push results
         run: |
@@ -616,15 +509,14 @@ jobs:
               rm -f "$TEMP_SUMMARY"
             fi
             
-            git commit -m "🎯 Batch ${{ matrix.batch }} scan results + consolidated files - ${FINDINGS_COUNT} findings
+            git commit -m "🎯 Batch ${{ matrix.batch }} scan results - ${FINDINGS_COUNT} findings
             
             - Batch: ${{ matrix.batch }}
             - Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
             - Workflow: ${{ github.workflow }}
             - Run ID: ${{ github.run_id }}
             - Scan Profile: ${{ github.event.inputs.scan_profile || 'full' }}
-            - Findings: ${FINDINGS_COUNT}
-            - Consolidated: all_latest_nuclei_results.json.gpg + all_latest_nuclei_results.txt.gpg"
+            - Findings: ${FINDINGS_COUNT}"
             
             # Push with retry logic
             for i in {1..3}; do
@@ -670,161 +562,148 @@ jobs:
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
           echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --batch --import
 
-      - name: Generate consolidated report
+      - name: Create consolidated results files
         run: |
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          REPORT_FILE="consolidated_report_${TIMESTAMP}.json"
           
-          # Initialize report structure
-          cat > "${REPORT_FILE}" << EOF
-          {
-            "scan_metadata": {
-              "timestamp": "${TIMESTAMP}",
-              "workflow_run_id": "${{ github.run_id }}",
-              "total_batches_processed": $(ls encrypted-results/*summary*.gpg 2>/dev/null | wc -l),
-              "scan_profile": "${{ github.event.inputs.scan_profile || 'full' }}"
-            },
-            "batch_summaries": [],
-            "overall_summary": {
-              "total_findings": 0,
-              "critical": 0,
-              "high": 0,
-              "medium": 0,
-              "low": 0,
-              "info": 0,
-              "total_subdomains_scanned": 0
-            }
-          }
-          EOF
+          echo "🔄 Creating consolidated results for all batches..."
           
-          # Process each summary file from latest results
-          TOTAL_FINDINGS=0
-          TOTAL_CRITICAL=0
-          TOTAL_HIGH=0
-          TOTAL_MEDIUM=0
-          TOTAL_LOW=0
-          TOTAL_INFO=0
-          TOTAL_SUBDOMAINS=0
+          # Create consolidated JSON file (combine all batch JSON results)
+          CONSOLIDATED_JSON="all_latest_nuclei_results.json"
+          CONSOLIDATED_TXT="all_latest_nuclei_results.txt"
           
+          # Initialize consolidated files
+          echo "[]" > "$CONSOLIDATED_JSON"
+          echo "# Nuclei Scan Results - All Batches Combined" > "$CONSOLIDATED_TXT"
+          echo "# Generated: $(date)" >> "$CONSOLIDATED_TXT"
+          echo "# Workflow: ${{ github.workflow }}" >> "$CONSOLIDATED_TXT"
+          echo "# Run ID: ${{ github.run_id }}" >> "$CONSOLIDATED_TXT"
+          echo "" >> "$CONSOLIDATED_TXT"
+          
+          # Process all existing batch results in latest directory
           if [ -d "output/latest" ]; then
-            for summary_file in output/latest/*summary*.gpg; do
-            if [ -f "$summary_file" ]; then
-              # Decrypt summary
-              DECRYPTED_SUMMARY=$(mktemp)
-              gpg --batch --yes --quiet --trust-model always --decrypt "$summary_file" > "$DECRYPTED_SUMMARY" 2>/dev/null
-              
-              if [ -s "$DECRYPTED_SUMMARY" ]; then
-                # Extract values from summary
-                BATCH_FINDINGS=$(jq -r '.results_summary.total_findings' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
-                BATCH_CRITICAL=$(jq -r '.results_summary.critical' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
-                BATCH_HIGH=$(jq -r '.results_summary.high' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
-                BATCH_MEDIUM=$(jq -r '.results_summary.medium' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
-                BATCH_LOW=$(jq -r '.results_summary.low' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
-                BATCH_INFO=$(jq -r '.results_summary.info' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
-                BATCH_SUBDOMAINS=$(jq -r '.subdomains_scanned' "$DECRYPTED_SUMMARY" 2>/dev/null || echo "0")
-                
-                # Add to totals
-                TOTAL_FINDINGS=$((TOTAL_FINDINGS + BATCH_FINDINGS))
-                TOTAL_CRITICAL=$((TOTAL_CRITICAL + BATCH_CRITICAL))
-                TOTAL_HIGH=$((TOTAL_HIGH + BATCH_HIGH))
-                TOTAL_MEDIUM=$((TOTAL_MEDIUM + BATCH_MEDIUM))
-                TOTAL_LOW=$((TOTAL_LOW + BATCH_LOW))
-                TOTAL_INFO=$((TOTAL_INFO + BATCH_INFO))
-                TOTAL_SUBDOMAINS=$((TOTAL_SUBDOMAINS + BATCH_SUBDOMAINS))
-                
-                # Add to batch summaries array
-                TEMP_REPORT=$(mktemp)
-                jq --slurpfile batch "$DECRYPTED_SUMMARY" '.batch_summaries += $batch' "$REPORT_FILE" > "$TEMP_REPORT"
-                mv "$TEMP_REPORT" "$REPORT_FILE"
+            # Combine all JSON results
+            for json_file in output/latest/nuclei_results_batch_*_latest.json.gpg; do
+              if [ -f "$json_file" ]; then
+                echo "Processing JSON: $json_file"
+                TEMP_JSON=$(mktemp)
+                if gpg --batch --yes --quiet --trust-model always --decrypt "$json_file" > "$TEMP_JSON" 2>/dev/null; then
+                  # Merge JSON results
+                  jq -s '.[0] + .[1]' "$CONSOLIDATED_JSON" "$TEMP_JSON" > "${CONSOLIDATED_JSON}.tmp" && mv "${CONSOLIDATED_JSON}.tmp" "$CONSOLIDATED_JSON"
+                fi
+                rm -f "$TEMP_JSON"
               fi
-              
-              rm -f "$DECRYPTED_SUMMARY"
-            fi
+            done
+            
+            # Combine all text results
+            for txt_file in output/latest/nuclei_results_batch_*_latest.txt.gpg; do
+              if [ -f "$txt_file" ]; then
+                echo "Processing text: $txt_file"
+                TEMP_TXT=$(mktemp)
+                if gpg --batch --yes --quiet --trust-model always --decrypt "$txt_file" > "$TEMP_TXT" 2>/dev/null; then
+                  echo "=== BATCH RESULTS ===" >> "$CONSOLIDATED_TXT"
+                  cat "$TEMP_TXT" >> "$CONSOLIDATED_TXT"
+                  echo "" >> "$CONSOLIDATED_TXT"
+                fi
+                rm -f "$TEMP_TXT"
+              fi
             done
           else
             echo "No latest results directory found"
           fi
           
-          # Update overall summary
-          TEMP_REPORT=$(mktemp)
-          jq --argjson total_findings "$TOTAL_FINDINGS" \
-             --argjson critical "$TOTAL_CRITICAL" \
-             --argjson high "$TOTAL_HIGH" \
-             --argjson medium "$TOTAL_MEDIUM" \
-             --argjson low "$TOTAL_LOW" \
-             --argjson info "$TOTAL_INFO" \
-             --argjson subdomains "$TOTAL_SUBDOMAINS" \
-             '.overall_summary.total_findings = $total_findings |
-              .overall_summary.critical = $critical |
-              .overall_summary.high = $high |
-              .overall_summary.medium = $medium |
-              .overall_summary.low = $low |
-              .overall_summary.info = $info |
-              .overall_summary.total_subdomains_scanned = $subdomains' \
-             "$REPORT_FILE" > "$TEMP_REPORT"
-          mv "$TEMP_REPORT" "$REPORT_FILE"
+          # Remove duplicates and sort
+          echo "🔧 Removing duplicates and sorting results..."
           
-          echo "report_file=${REPORT_FILE}" >> $GITHUB_ENV
-          echo "Generated consolidated report with ${TOTAL_FINDINGS} total findings across ${TOTAL_SUBDOMAINS} subdomains"
+          # Sort and deduplicate JSON results
+          if [ -f "$CONSOLIDATED_JSON" ] && [ -s "$CONSOLIDATED_JSON" ]; then
+            jq 'unique_by(.host + .info.name + .info.severity)' "$CONSOLIDATED_JSON" > "${CONSOLIDATED_JSON}.tmp" && mv "${CONSOLIDATED_JSON}.tmp" "$CONSOLIDATED_JSON"
+            echo "✅ JSON results deduplicated: $(wc -l < "$CONSOLIDATED_JSON") unique findings"
+          fi
+          
+          # Sort and deduplicate text results
+          if [ -f "$CONSOLIDATED_TXT" ] && [ -s "$CONSOLIDATED_TXT" ]; then
+            sort -u "$CONSOLIDATED_TXT" > "${CONSOLIDATED_TXT}.tmp" && mv "${CONSOLIDATED_TXT}.tmp" "$CONSOLIDATED_TXT"
+            echo "✅ Text results deduplicated: $(wc -l < "$CONSOLIDATED_TXT") lines"
+          fi
+          
+          echo "📊 Consolidated files created:"
+          echo "   📄 JSON: $CONSOLIDATED_JSON ($(wc -l < "$CONSOLIDATED_JSON") lines)"
+          echo "   📄 Text: $CONSOLIDATED_TXT ($(wc -l < "$CONSOLIDATED_TXT") lines)"
+          
+          echo "✅ Consolidated files ready for encryption"
 
-      - name: Encrypt consolidated report
+      - name: Encrypt consolidated results
         run: |
-          if [ -f "${{ env.report_file }}" ]; then
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          
+          # Encrypt consolidated JSON
+          if [ -f "all_latest_nuclei_results.json" ]; then
             gpg --batch --yes --trust-model always \
                 --recipient "${{ secrets.GPG_KEY_ID }}" \
                 --encrypt --armor \
-                --output "${{ env.report_file }}.gpg" \
-                "${{ env.report_file }}"
-            
-            rm -f "${{ env.report_file }}"
-            echo "✅ Consolidated report encrypted"
+                --output "all_latest_nuclei_results.json.gpg" \
+                "all_latest_nuclei_results.json"
+            echo "✅ Consolidated JSON encrypted: all_latest_nuclei_results.json.gpg"
           fi
+          
+          # Encrypt consolidated text
+          if [ -f "all_latest_nuclei_results.txt" ]; then
+            gpg --batch --yes --trust-model always \
+                --recipient "${{ secrets.GPG_KEY_ID }}" \
+                --encrypt --armor \
+                --output "all_latest_nuclei_results.txt.gpg" \
+                "all_latest_nuclei_results.txt"
+            echo "✅ Consolidated text encrypted: all_latest_nuclei_results.txt.gpg"
+          fi
+          
+          # Clean up unencrypted files
+          rm -f all_latest_nuclei_results.json all_latest_nuclei_results.txt
 
-      - name: Store consolidated report in repo
+      - name: Store consolidated results in output
         run: |
-          # Configure git
-          git config --global user.name "Nuclei Scanner Bot"
-          git config --global user.email "nuclei-scanner@github-actions.bot"
+          # Move consolidated encrypted files to output directory
+          if [ -f "all_latest_nuclei_results.json.gpg" ]; then
+            mv "all_latest_nuclei_results.json.gpg" "output/"
+            echo "✅ Consolidated JSON stored in output/"
+          fi
           
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          DATE_DIR="output/$(date +%Y/%m/%d)"
+          if [ -f "all_latest_nuclei_results.txt.gpg" ]; then
+            mv "all_latest_nuclei_results.txt.gpg" "output/"
+            echo "✅ Consolidated text stored in output/"
+          fi
           
-          # Ensure we're on results branch
-          git checkout ${{ env.RESULTS_BRANCH }} || git checkout -b ${{ env.RESULTS_BRANCH }}
+      - name: Commit consolidated results
+        run: |
+          # Add consolidated files
+          git add output/
           
-          # Create directories
-          mkdir -p "${DATE_DIR}"
-          mkdir -p "output/latest"
-          
-          # Move consolidated report
-          if [ -f "consolidated_report_*.json.gpg" ]; then
-            mv consolidated_report_*.json.gpg "${DATE_DIR}/consolidated_report_${TIMESTAMP}.json.gpg"
-            cp "${DATE_DIR}/consolidated_report_${TIMESTAMP}.json.gpg" "output/latest/consolidated_report_latest.json.gpg"
-            
-            # Add and commit
-            git add output/
-            git commit -m "📊 Consolidated scan report - $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-            
-            - Workflow: ${{ github.workflow }}
-            - Run ID: ${{ github.run_id }}
-            - Timestamp: ${TIMESTAMP}
-            - Type: Consolidated Report"
-            
-            # Push with retry logic
-            for i in {1..3}; do
-              if git push origin ${{ env.RESULTS_BRANCH }}; then
-                echo "Successfully pushed consolidated report (attempt $i)"
-                break
-              else
-                echo "Push failed for consolidated report, attempt $i/3"
-                if [ $i -eq 3 ]; then
-                  echo "Failed to push after 3 attempts"
-                  exit 1
-                fi
-                sleep $((i * 10))
-                git pull --rebase origin ${{ env.RESULTS_BRANCH }} || true
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No consolidated results to commit"
+          else
+            # Get total findings count
+            FINDINGS_COUNT="0"
+            if [ -f "output/all_latest_nuclei_results.json.gpg" ]; then
+              TEMP_JSON=$(mktemp)
+              if gpg --batch --yes --quiet --trust-model always --decrypt "output/all_latest_nuclei_results.json.gpg" > "$TEMP_JSON" 2>/dev/null; then
+                FINDINGS_COUNT=$(jq 'length' "$TEMP_JSON" 2>/dev/null || echo "0")
               fi
-            done
+              rm -f "$TEMP_JSON"
+            fi
+            
+            git commit -m "🎯 Consolidated scan results - ${FINDINGS_COUNT} total findings
+            
+            - All batches consolidated into single files
+            - JSON: all_latest_nuclei_results.json.gpg
+            - Text: all_latest_nuclei_results.txt.gpg
+            - Total findings: ${FINDINGS_COUNT}
+            - Workflow: ${{ github.workflow }}
+            - Run ID: ${{ github.run_id }}"
+            
+            # Push consolidated results
+            git push origin ${{ env.RESULTS_BRANCH }}
+            echo "✅ Consolidated results committed and pushed"
           fi
 
       - name: Create workflow summary
