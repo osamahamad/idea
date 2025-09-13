@@ -303,7 +303,6 @@ jobs:
             ${{ steps.scan-config.outputs.timeout }} \
             -j \
             -o "${OUTPUT_JSON}" \
-            -o "${OUTPUT_TXT}" \
             -stats \
             -retries 1 \
             -bulk-size 100 \
@@ -311,10 +310,6 @@ jobs:
             -header "User-Agent: Mozilla/5.0 (compatible; SecurityScanner/1.0)" \
             -exclude-tags dos,intrusive,brute-force \
             -max-host-error 5 \
-            -auth true \
-            -dashboard \
-            -team-id ctc6cl3sphctogp11qc0 \
-            -cloud-upload \
             || echo "Scan completed with some errors (exit code: $?)"
           
           # Check if results files exist and have content
