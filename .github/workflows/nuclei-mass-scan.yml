@@ -250,7 +250,8 @@ jobs:
         run: |
           BATCH_NUM=${{ matrix.batch }}
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          OUTPUT_FILE="nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json"
+          OUTPUT_JSON="nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json"
+          OUTPUT_TXT="nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.txt"
           
           echo "🎯 Starting Nuclei scan for batch ${BATCH_NUM}..."
           
@@ -292,6 +293,7 @@ jobs:
             echo "📦 Manual template download attempted"
           fi
           
+          # Run Nuclei scan with both JSON and text output
           nuclei \
             -l ${{ steps.prepare-batch.outputs.batch_file }} \
             ${{ steps.scan-config.outputs.templates }} \
@@ -299,7 +301,8 @@ jobs:
             ${{ steps.scan-config.outputs.rate_limit }} \
             ${{ steps.scan-config.outputs.timeout }} \
             -j \
-            -o "${OUTPUT_FILE}" \
+            -o "${OUTPUT_JSON}" \
+            -o "${OUTPUT_TXT}" \
             -stats \
             -retries 1 \
             -bulk-size 100 \
@@ -309,21 +312,25 @@ jobs:
             -max-host-error 5 \
             || echo "Scan completed with some errors (exit code: $?)"
           
-          # Check if results file exists and has content
-          if [ -f "${OUTPUT_FILE}" ] && [ -s "${OUTPUT_FILE}" ]; then
-            echo "✅ Scan results generated: ${OUTPUT_FILE}"
-            echo "📊 Results count: $(wc -l < ${OUTPUT_FILE})"
-            echo "🔍 First few results:"
-            head -3 "${OUTPUT_FILE}" || echo "Could not display results"
-            echo "results_file=${OUTPUT_FILE}" >> $GITHUB_ENV
+          # Check if results files exist and have content
+          if [ -f "${OUTPUT_JSON}" ] && [ -s "${OUTPUT_JSON}" ]; then
+            echo "✅ JSON results generated: ${OUTPUT_JSON}"
+            echo "📊 JSON results count: $(wc -l < ${OUTPUT_JSON})"
+            echo "results_json=${OUTPUT_JSON}" >> $GITHUB_ENV
           else
-            echo "❌ No results found for batch ${BATCH_NUM}"
-            echo "📁 Checking if output file exists:"
-            ls -la "${OUTPUT_FILE}" 2>/dev/null || echo "Output file does not exist"
-            echo "📁 Current directory contents:"
-            ls -la *.json 2>/dev/null || echo "No JSON files found"
-            echo '[]' > "${OUTPUT_FILE}"
-            echo "results_file=${OUTPUT_FILE}" >> $GITHUB_ENV
+            echo "❌ No JSON results found for batch ${BATCH_NUM}"
+            echo '[]' > "${OUTPUT_JSON}"
+            echo "results_json=${OUTPUT_JSON}" >> $GITHUB_ENV
+          fi
+          
+          if [ -f "${OUTPUT_TXT}" ] && [ -s "${OUTPUT_TXT}" ]; then
+            echo "✅ Text results generated: ${OUTPUT_TXT}"
+            echo "📊 Text results count: $(wc -l < ${OUTPUT_TXT})"
+            echo "results_txt=${OUTPUT_TXT}" >> $GITHUB_ENV
+          else
+            echo "❌ No text results found for batch ${BATCH_NUM}"
+            echo "" > "${OUTPUT_TXT}"
+            echo "results_txt=${OUTPUT_TXT}" >> $GITHUB_ENV
           fi
 
       - name: Generate scan summary
@@ -333,13 +340,13 @@ jobs:
           SUMMARY_FILE="scan_summary_batch_${BATCH_NUM}_${TIMESTAMP}.json"
           
           # Count results by severity
-          if [ -f "${{ env.results_file }}" ]; then
-            CRITICAL=$(jq -r 'select(.info.severity == "critical") | .info.severity' ${{ env.results_file }} 2>/dev/null | wc -l || echo "0")
-            HIGH=$(jq -r 'select(.info.severity == "high") | .info.severity' ${{ env.results_file }} 2>/dev/null | wc -l || echo "0")
-            MEDIUM=$(jq -r 'select(.info.severity == "medium") | .info.severity' ${{ env.results_file }} 2>/dev/null | wc -l || echo "0")
-            LOW=$(jq -r 'select(.info.severity == "low") | .info.severity' ${{ env.results_file }} 2>/dev/null | wc -l || echo "0")
-            INFO=$(jq -r 'select(.info.severity == "info") | .info.severity' ${{ env.results_file }} 2>/dev/null | wc -l || echo "0")
-            TOTAL=$(wc -l < ${{ env.results_file }} 2>/dev/null || echo "0")
+          if [ -f "${{ env.results_json }}" ]; then
+            CRITICAL=$(jq -r 'select(.info.severity == "critical") | .info.severity' ${{ env.results_json }} 2>/dev/null | wc -l || echo "0")
+            HIGH=$(jq -r 'select(.info.severity == "high") | .info.severity' ${{ env.results_json }} 2>/dev/null | wc -l || echo "0")
+            MEDIUM=$(jq -r 'select(.info.severity == "medium") | .info.severity' ${{ env.results_json }} 2>/dev/null | wc -l || echo "0")
+            LOW=$(jq -r 'select(.info.severity == "low") | .info.severity' ${{ env.results_json }} 2>/dev/null | wc -l || echo "0")
+            INFO=$(jq -r 'select(.info.severity == "info") | .info.severity' ${{ env.results_json }} 2>/dev/null | wc -l || echo "0")
+            TOTAL=$(wc -l < ${{ env.results_json }} 2>/dev/null || echo "0")
           else
             CRITICAL=0; HIGH=0; MEDIUM=0; LOW=0; INFO=0; TOTAL=0
           fi
@@ -384,14 +391,24 @@ jobs:
         run: |
           BATCH_NUM=${{ matrix.batch }}
           
-          # Encrypt results file
-          if [ -f "${{ env.results_file }}" ]; then
+          # Encrypt JSON results file
+          if [ -f "${{ env.results_json }}" ]; then
             gpg --batch --yes --trust-model always \
                 --recipient "${{ secrets.GPG_KEY_ID }}" \
                 --encrypt --armor \
-                --output "${{ env.results_file }}.gpg" \
-                "${{ env.results_file }}"
-            echo "Results encrypted: ${{ env.results_file }}.gpg"
+                --output "${{ env.results_json }}.gpg" \
+                "${{ env.results_json }}"
+            echo "JSON results encrypted: ${{ env.results_json }}.gpg"
+          fi
+          
+          # Encrypt text results file
+          if [ -f "${{ env.results_txt }}" ]; then
+            gpg --batch --yes --trust-model always \
+                --recipient "${{ secrets.GPG_KEY_ID }}" \
+                --encrypt --armor \
+                --output "${{ env.results_txt }}.gpg" \
+                "${{ env.results_txt }}"
+            echo "Text results encrypted: ${{ env.results_txt }}.gpg"
           fi
           
           # Encrypt summary file
@@ -405,7 +422,7 @@ jobs:
           fi
           
           # Clean up unencrypted files
-          rm -f "${{ env.results_file }}" "${{ env.summary_file }}"
+          rm -f "${{ env.results_json }}" "${{ env.results_txt }}" "${{ env.summary_file }}"
 
       - name: Setup results branch
         run: |
@@ -434,7 +451,14 @@ jobs:
           for file in nuclei_results_batch_${BATCH_NUM}_*.json.gpg; do
             if [ -f "$file" ]; then
               mv "$file" "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg"
-              echo "Moved results file: $file"
+              echo "Moved JSON results file: $file"
+            fi
+          done
+          
+          for file in nuclei_results_batch_${BATCH_NUM}_*.txt.gpg; do
+            if [ -f "$file" ]; then
+              mv "$file" "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.txt.gpg"
+              echo "Moved text results file: $file"
             fi
           done
           
@@ -448,6 +472,10 @@ jobs:
           # Also copy to latest directory for easy access
           if [ -f "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg" ]; then
             cp "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg" "output/latest/nuclei_results_batch_${BATCH_NUM}_latest.json.gpg"
+          fi
+          
+          if [ -f "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.txt.gpg" ]; then
+            cp "${DATE_DIR}/nuclei_results_batch_${BATCH_NUM}_${TIMESTAMP}.txt.gpg" "output/latest/nuclei_results_batch_${BATCH_NUM}_latest.txt.gpg"
           fi
           
           if [ -f "${DATE_DIR}/scan_summary_batch_${BATCH_NUM}_${TIMESTAMP}.json.gpg" ]; then
@@ -509,11 +537,12 @@ jobs:
           rm -f *.json
           echo "Cleanup completed for batch ${{ matrix.batch }}"
 
-  # Job to consolidate results and create final report
-  consolidate-results:
+  # Job to consolidate all batch results into single files
+  consolidate-all-results:
     needs: [prepare-batches, nuclei-scan]
     if: always() && needs.prepare-batches.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
