@@ -29,7 +29,7 @@ on:
 env:
   BATCH_SIZE: 1  # Reduced batch size for faster completion
   MAX_PARALLEL_JOBS: 15  # Conservative limit to avoid GitHub rate limits
-  NUCLEI_VERSION: "v3.4.10"
+  NUCLEI_VERSION: "v3.1.0"
   RESULTS_BRANCH: "scan-results"  # Dedicated branch for storing results
 
 jobs:
@@ -313,7 +313,7 @@ jobs:
              -exclude-tags dos,intrusive,brute-force \
              -max-host-error 5 \
              -auth true \
-             -dashboard \
+             -cloud-upload \
              -team-id ctc6cl3sphctogp11qc0 || echo "Scan completed with some errors (exit code: $?)"
           
           # Check if results files exist and have content
